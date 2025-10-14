@@ -2,10 +2,12 @@
 
 import chai, { expect } from 'chai'
 import chaiAsPromised from 'chai-as-promised'
+import { solidity } from 'ethereum-waffle'
 import { SignerWithAddress } from '@nomiclabs/hardhat-ethers/signers'
 import { EthereumDIDRegistry } from '../typechain-types/EthereumDIDRegistry'
 
 chai.use(chaiAsPromised)
+chai.use(solidity)
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { ethers } = require('hardhat')
