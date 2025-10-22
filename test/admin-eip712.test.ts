@@ -162,7 +162,7 @@ describe('Admin and EIP-712 Functionality', () => {
           { name: 'identity', type: 'address' },
           { name: 'delegateType', type: 'bytes32' },
           { name: 'delegate', type: 'address' },
-          { name: 'validity', type: 'uint256' },
+          { name: 'validTo', type: 'uint256' },
         ],
       }
 
@@ -179,7 +179,7 @@ describe('Admin and EIP-712 Functionality', () => {
           { name: 'identity', type: 'address' },
           { name: 'name', type: 'bytes32' },
           { name: 'value', type: 'bytes' },
-          { name: 'validity', type: 'uint256' },
+          { name: 'validTo', type: 'uint256' },
         ],
       }
 
@@ -258,11 +258,14 @@ describe('Admin and EIP-712 Functionality', () => {
     describe('addDelegateEIP712', () => {
       const { formatBytes32String } = ethers.utils
       const delegateType = formatBytes32String('attestor')
-      const validity = 86400 // 1 day
+      let validTo: number
 
       beforeEach(async () => {
         // Ensure identity owns itself
         await didReg.connect(admin).adminChangeOwner(identity.address, identity.address)
+        // Set validTo to 1 day from now
+        const currentBlock = await ethers.provider.getBlock('latest')
+        validTo = currentBlock.timestamp + 86400 // 1 day
       })
 
       it('should add delegate using EIP-712 signature', async () => {
@@ -270,7 +273,7 @@ describe('Admin and EIP-712 Functionality', () => {
           identity: identity.address,
           delegateType,
           delegate: newOwner.address,
-          validity,
+          validTo,
         }
 
         const signature = await identity._signTypedData(domain, addDelegateTypes, message)
@@ -279,7 +282,7 @@ describe('Admin and EIP-712 Functionality', () => {
         // Execute add delegate
         await didReg
           .connect(attacker)
-          .addDelegateEIP712(identity.address, delegateType, newOwner.address, validity, v, r, s)
+          .addDelegateEIP712(identity.address, delegateType, newOwner.address, validTo, v, r, s)
 
         // Verify delegate was added
         const isValid = await didReg.validDelegate(identity.address, delegateType, newOwner.address)
@@ -291,7 +294,7 @@ describe('Admin and EIP-712 Functionality', () => {
           identity: identity.address,
           delegateType,
           delegate: newOwner.address,
-          validity,
+          validTo,
         }
 
         // Sign with wrong key
@@ -299,10 +302,61 @@ describe('Admin and EIP-712 Functionality', () => {
         const { v, r, s } = ethers.utils.splitSignature(signature)
 
         await expect(
+          didReg.connect(attacker).addDelegateEIP712(identity.address, delegateType, newOwner.address, validTo, v, r, s)
+        ).to.be.revertedWith('bad_eip712_signature')
+      })
+
+      it('should reject expired validTo timestamp', async () => {
+        // Set validTo to past timestamp
+        const currentBlock = await ethers.provider.getBlock('latest')
+        const expiredValidTo = currentBlock.timestamp - 3600 // 1 hour ago
+
+        const message = {
+          identity: identity.address,
+          delegateType,
+          delegate: newOwner.address,
+          validTo: expiredValidTo,
+        }
+
+        const signature = await identity._signTypedData(domain, addDelegateTypes, message)
+        const { v, r, s } = ethers.utils.splitSignature(signature)
+
+        await expect(
           didReg
             .connect(attacker)
-            .addDelegateEIP712(identity.address, delegateType, newOwner.address, validity, v, r, s)
-        ).to.be.revertedWith('bad_eip712_signature')
+            .addDelegateEIP712(identity.address, delegateType, newOwner.address, expiredValidTo, v, r, s)
+        ).to.be.revertedWith('invalid_expiry')
+      })
+
+      it('should prevent signature replay attacks', async () => {
+        const message = {
+          identity: identity.address,
+          delegateType,
+          delegate: newOwner.address,
+          validTo,
+        }
+
+        const signature = await identity._signTypedData(domain, addDelegateTypes, message)
+        const { v, r, s } = ethers.utils.splitSignature(signature)
+
+        // First call should succeed
+        await didReg
+          .connect(attacker)
+          .addDelegateEIP712(identity.address, delegateType, newOwner.address, validTo, v, r, s)
+
+        // Wait for time to pass (simulate time advancement)
+        await ethers.provider.send('evm_increaseTime', [3600]) // 1 hour
+        await ethers.provider.send('evm_mine', [])
+
+        // Try to replay the same signature - it should still set the same validTo, not extend it
+        await didReg
+          .connect(attacker)
+          .addDelegateEIP712(identity.address, delegateType, newOwner.address, validTo, v, r, s)
+
+        // Verify delegate still has the original expiry time, not extended
+        const delegateKey = ethers.utils.keccak256(ethers.utils.defaultAbiCoder.encode(['bytes32'], [delegateType]))
+        const actualValidTo = await didReg.delegates(identity.address, delegateKey, newOwner.address)
+        expect(actualValidTo).to.equal(validTo)
       })
     })
 
@@ -359,11 +413,14 @@ describe('Admin and EIP-712 Functionality', () => {
       const { formatBytes32String, toUtf8Bytes } = ethers.utils
       const attributeName = formatBytes32String('encryptionKey')
       const attributeValue = toUtf8Bytes('mykey')
-      const validity = 86400
+      let validTo: number
 
       beforeEach(async () => {
         // Ensure identity owns itself
         await didReg.connect(admin).adminChangeOwner(identity.address, identity.address)
+        // Set validTo to 1 day from now
+        const currentBlock = await ethers.provider.getBlock('latest')
+        validTo = currentBlock.timestamp + 86400 // 1 day
       })
 
       it('should set attribute using EIP-712 signature', async () => {
@@ -371,7 +428,7 @@ describe('Admin and EIP-712 Functionality', () => {
           identity: identity.address,
           name: attributeName,
           value: attributeValue,
-          validity,
+          validTo,
         }
 
         const signature = await identity._signTypedData(domain, setAttributeTypes, message)
@@ -380,7 +437,7 @@ describe('Admin and EIP-712 Functionality', () => {
         // Execute set attribute
         const tx = await didReg
           .connect(attacker)
-          .setAttributeEIP712(identity.address, attributeName, attributeValue, validity, v, r, s)
+          .setAttributeEIP712(identity.address, attributeName, attributeValue, validTo, v, r, s)
 
         // Verify event was emitted
         const receipt = await tx.wait()
@@ -393,7 +450,7 @@ describe('Admin and EIP-712 Functionality', () => {
           identity: identity.address,
           name: attributeName,
           value: attributeValue,
-          validity,
+          validTo,
         }
 
         // Sign with wrong key
@@ -401,10 +458,30 @@ describe('Admin and EIP-712 Functionality', () => {
         const { v, r, s } = ethers.utils.splitSignature(signature)
 
         await expect(
+          didReg.connect(attacker).setAttributeEIP712(identity.address, attributeName, attributeValue, validTo, v, r, s)
+        ).to.be.revertedWith('bad_eip712_signature')
+      })
+
+      it('should reject expired validTo timestamp for setAttribute', async () => {
+        // Set validTo to past timestamp
+        const currentBlock = await ethers.provider.getBlock('latest')
+        const expiredValidTo = currentBlock.timestamp - 3600 // 1 hour ago
+
+        const message = {
+          identity: identity.address,
+          name: attributeName,
+          value: attributeValue,
+          validTo: expiredValidTo,
+        }
+
+        const signature = await identity._signTypedData(domain, setAttributeTypes, message)
+        const { v, r, s } = ethers.utils.splitSignature(signature)
+
+        await expect(
           didReg
             .connect(attacker)
-            .setAttributeEIP712(identity.address, attributeName, attributeValue, validity, v, r, s)
-        ).to.be.revertedWith('bad_eip712_signature')
+            .setAttributeEIP712(identity.address, attributeName, attributeValue, expiredValidTo, v, r, s)
+        ).to.be.revertedWith('invalid_expiry')
       })
     })
 

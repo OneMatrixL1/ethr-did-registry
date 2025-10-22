@@ -21,9 +21,9 @@ contract EthereumDIDRegistry {
   
   // EIP-712 TypeHashes
   bytes32 public constant CHANGE_OWNER_TYPEHASH = keccak256("ChangeOwner(address identity,address newOwner)");
-  bytes32 public constant ADD_DELEGATE_TYPEHASH = keccak256("AddDelegate(address identity,bytes32 delegateType,address delegate,uint256 validity)");
+  bytes32 public constant ADD_DELEGATE_TYPEHASH = keccak256("AddDelegate(address identity,bytes32 delegateType,address delegate,uint256 validTo)");
   bytes32 public constant REVOKE_DELEGATE_TYPEHASH = keccak256("RevokeDelegate(address identity,bytes32 delegateType,address delegate)");
-  bytes32 public constant SET_ATTRIBUTE_TYPEHASH = keccak256("SetAttribute(address identity,bytes32 name,bytes value,uint256 validity)");
+  bytes32 public constant SET_ATTRIBUTE_TYPEHASH = keccak256("SetAttribute(address identity,bytes32 name,bytes value,uint256 validTo)");
   bytes32 public constant REVOKE_ATTRIBUTE_TYPEHASH = keccak256("RevokeAttribute(address identity,bytes32 name,bytes value)");
 
   modifier onlyOwner(address identity, address actor) {
@@ -154,13 +154,15 @@ contract EthereumDIDRegistry {
   }
   
   // EIP-712 version for adding delegate
-  function addDelegateEIP712(address identity, bytes32 delegateType, address delegate, uint validity, uint8 sigV, bytes32 sigR, bytes32 sigS) public {
-    bytes32 structHash = keccak256(abi.encode(ADD_DELEGATE_TYPEHASH, identity, delegateType, delegate, validity));
+  function addDelegateEIP712(address identity, bytes32 delegateType, address delegate, uint256 validTo, uint8 sigV, bytes32 sigR, bytes32 sigS) public {
+    require(validTo >= block.timestamp, "invalid_expiry");
+    
+    bytes32 structHash = keccak256(abi.encode(ADD_DELEGATE_TYPEHASH, identity, delegateType, delegate, validTo));
     address currentOwner = identityOwner(identity);
     checkEIP712Signature(currentOwner, sigV, sigR, sigS, structHash);
     
-    delegates[identity][keccak256(abi.encode(delegateType))][delegate] = block.timestamp + validity;
-    emit DIDDelegateChanged(identity, delegateType, delegate, block.timestamp + validity, changed[identity]);
+    delegates[identity][keccak256(abi.encode(delegateType))][delegate] = validTo;
+    emit DIDDelegateChanged(identity, delegateType, delegate, validTo, changed[identity]);
     changed[identity] = block.number;
   }
 
@@ -205,12 +207,14 @@ contract EthereumDIDRegistry {
   }
   
   // EIP-712 version for setting attribute
-  function setAttributeEIP712(address identity, bytes32 name, bytes memory value, uint validity, uint8 sigV, bytes32 sigR, bytes32 sigS) public {
-    bytes32 structHash = keccak256(abi.encode(SET_ATTRIBUTE_TYPEHASH, identity, name, keccak256(value), validity));
+  function setAttributeEIP712(address identity, bytes32 name, bytes memory value, uint256 validTo, uint8 sigV, bytes32 sigR, bytes32 sigS) public {
+    require(validTo >= block.timestamp, "invalid_expiry");
+    
+    bytes32 structHash = keccak256(abi.encode(SET_ATTRIBUTE_TYPEHASH, identity, name, keccak256(value), validTo));
     address currentOwner = identityOwner(identity);
     checkEIP712Signature(currentOwner, sigV, sigR, sigS, structHash);
     
-    emit DIDAttributeChanged(identity, name, value, block.timestamp + validity, changed[identity]);
+    emit DIDAttributeChanged(identity, name, value, validTo, changed[identity]);
     changed[identity] = block.number;
   }
 
