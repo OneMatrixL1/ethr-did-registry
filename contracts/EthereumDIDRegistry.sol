@@ -2,6 +2,10 @@
 
 pragma solidity ^0.8.28;
 
+interface IAdminManagement {
+    function isAdmin(address user) external view returns (bool);
+}
+
 contract EthereumDIDRegistry {
 
   mapping(address => address) public owners;
@@ -9,9 +13,9 @@ contract EthereumDIDRegistry {
   mapping(address => uint) public changed;
   mapping(address => uint) public nonce;
   
-  // Admin functionality
-  address public admin;
-  
+  // Admin Management contract address
+  address public adminManagement;
+
   // EIP-712 Domain Separator
   bytes32 public immutable DOMAIN_SEPARATOR;
   
@@ -28,13 +32,13 @@ contract EthereumDIDRegistry {
   }
   
   modifier onlyAdmin() {
-    require(msg.sender == admin, "only_admin");
+    require(IAdminManagement(adminManagement).isAdmin(msg.sender), "only_admin");
     _;
   }
-  
-  constructor() {
-    admin = msg.sender;
-    
+
+  constructor(address _adminManagement) {
+    adminManagement = _adminManagement;
+
     // Initialize EIP-712 domain separator
     DOMAIN_SEPARATOR = keccak256(
       abi.encode(
@@ -132,13 +136,6 @@ contract EthereumDIDRegistry {
     owners[identity] = newOwner;
     emit DIDOwnerChanged(identity, newOwner, changed[identity]);
     changed[identity] = block.number;
-  }
-  
-  // Change admin function
-  function changeAdmin(address newAdmin) public onlyAdmin {
-    address previousAdmin = admin;
-    admin = newAdmin;
-    emit AdminChanged(previousAdmin, newAdmin);
   }
 
   function addDelegate(address identity, address actor, bytes32 delegateType, address delegate, uint validity) internal onlyOwner(identity, actor) {
