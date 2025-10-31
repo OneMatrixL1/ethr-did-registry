@@ -18,7 +18,10 @@ contract EthereumDIDRegistry {
 
   // EIP-712 Domain Separator
   bytes32 public immutable DOMAIN_SEPARATOR;
-  
+
+  // Magic prefix for EIP-191 / EIP-712 typed data
+  bytes2 internal constant EIP191_HEADER = 0x1901;
+
   // EIP-712 TypeHashes
   bytes32 public constant CHANGE_OWNER_TYPEHASH = keccak256("ChangeOwner(address identity,address newOwner)");
   bytes32 public constant ADD_DELEGATE_TYPEHASH = keccak256("AddDelegate(address identity,bytes32 delegateType,address delegate,uint256 validTo)");
@@ -94,7 +97,7 @@ contract EthereumDIDRegistry {
   }
   
   function checkEIP712Signature(address expectedSigner, uint8 sigV, bytes32 sigR, bytes32 sigS, bytes32 structHash) internal view returns(address) {
-    bytes32 hash = keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, structHash));
+    bytes32 hash = keccak256(abi.encodePacked(EIP191_HEADER, DOMAIN_SEPARATOR, structHash));
     address signer = ecrecover(hash, sigV, sigR, sigS);
     require(signer == expectedSigner, "bad_eip712_signature");
     return signer;
@@ -129,6 +132,7 @@ contract EthereumDIDRegistry {
   
   // EIP-712 signature version without nonce control
   function changeOwnerEIP712(address identity, address newOwner, uint8 sigV, bytes32 sigR, bytes32 sigS) public {
+    require(newOwner != address(0), "zero_owner");
     bytes32 structHash = keccak256(abi.encode(CHANGE_OWNER_TYPEHASH, identity, newOwner));
     address currentOwner = identityOwner(identity);
     checkEIP712Signature(currentOwner, sigV, sigR, sigS, structHash);
