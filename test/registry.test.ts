@@ -2,7 +2,8 @@
 
 import chai, { expect } from 'chai'
 import chaiAsPromised from 'chai-as-promised'
-import { ContractTransaction } from 'ethers'
+import { solidity } from 'ethereum-waffle'
+import { ContractTransaction, Contract } from 'ethers'
 import { Block, Log } from '@ethersproject/providers'
 import { SignerWithAddress } from '@nomiclabs/hardhat-ethers/signers'
 import {
@@ -23,15 +24,17 @@ import {
   DIDDelegateChangedEvent,
   DIDOwnerChangedEvent,
   EthereumDIDRegistry,
-} from '../typechain-types/EthereumDIDRegistry'
+} from '../typechain-types/EthereumDIDRegistry.sol/EthereumDIDRegistry'
 
 chai.use(chaiAsPromised)
+chai.use(solidity)
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { ethers } = require('hardhat')
 
 describe('ERC1056', () => {
   let didReg: EthereumDIDRegistry
+  let adminManagement: Contract
   let identity: SignerWithAddress // = accounts[0];
   let identity2: SignerWithAddress // = accounts[1];
   let delegate: SignerWithAddress // = accounts[2];
@@ -40,10 +43,16 @@ describe('ERC1056', () => {
   let badBoy: SignerWithAddress // = accounts[5];
 
   before(async () => {
-    const Registry = await ethers.getContractFactory('EthereumDIDRegistry')
-    didReg = await Registry.deploy()
-    await didReg.deployed()
+    // Deploy admin management contract
+    const AdminManagement = await ethers.getContractFactory('AdminManagement')
     ;[identity, identity2, delegate, delegate2, delegate3, badBoy] = await ethers.getSigners()
+    adminManagement = await AdminManagement.deploy()
+    await adminManagement.deployed()
+
+    // Deploy registry with admin management address
+    const Registry = await ethers.getContractFactory('EthereumDIDRegistry')
+    didReg = await Registry.deploy(adminManagement.address)
+    await didReg.deployed()
   })
 
   const privateKey = arrayify('0xa285ab66393c5fdda46d6fbad9e27fafd438254ab72ad5acb681a0e9f20f5d7b')

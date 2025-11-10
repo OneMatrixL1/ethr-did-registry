@@ -26,12 +26,14 @@ const config: HardhatUserConfig = {
   solidity: {
     compilers: [
       {
-        version: '0.8.6',
+        version: '0.8.28',
         settings: {
+          evmVersion: 'cancun',
           optimizer: {
             enabled: true,
             runs: 1000,
           },
+          viaIR: true,
         },
       },
     ],
@@ -47,6 +49,10 @@ const config: HardhatUserConfig = {
       url: process.env.ROPSTEN_URL || '',
       accounts: process.env.PRIVATE_KEY !== undefined ? [process.env.PRIVATE_KEY] : [],
     },
+    onematrix: {
+      url: 'https://rpc.vietcha.in',
+      accounts: process.env.PRIVATE_KEY !== undefined ? [process.env.PRIVATE_KEY] : [],
+    },
   },
   gasReporter: {
     enabled: process.env.REPORT_GAS !== undefined,
@@ -54,6 +60,16 @@ const config: HardhatUserConfig = {
   },
   etherscan: {
     apiKey: process.env.ETHERSCAN_API_KEY,
+    customChains: [
+      {
+        network: 'onematrix',
+        chainId: 84005,
+        urls: {
+          apiURL: 'https://explorer.vietcha.in/api',
+          browserURL: 'https://explorer.vietcha.in',
+        },
+      },
+    ],
   },
 }
 

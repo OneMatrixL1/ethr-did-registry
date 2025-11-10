@@ -3,7 +3,9 @@
 //
 // When running the script with `npx hardhat run <script>` you'll find the Hardhat
 // Runtime Environment's members available in the global scope.
-import { ethers } from 'hardhat'
+
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { ethers } = require('hardhat')
 
 async function main() {
   // Hardhat always runs the compile task when running scripts with its command
@@ -14,11 +16,18 @@ async function main() {
   // await hre.run('compile');
 
   // We get the contract to deploy
+  const AdminManagementContract = await ethers.getContractFactory('AdminManagement')
+  const adminManagementInstance = await AdminManagementContract.deploy()
+  await adminManagementInstance.deployed()
+
   const RegistryContract = await ethers.getContractFactory('EthereumDIDRegistry')
-  const contractInstance = await RegistryContract.deploy()
+  const contractInstance = await RegistryContract.deploy(
+    adminManagementInstance.address // admin
+  )
 
   await contractInstance.deployed()
 
+  console.log('AdminManagementContract deployed to:', adminManagementInstance.address)
   console.log('RegistryContract deployed to:', contractInstance.address)
 }
 
