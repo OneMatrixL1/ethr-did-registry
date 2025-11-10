@@ -2,10 +2,7 @@
 
 pragma solidity ^0.8.28;
 
-interface IAdminManagement {
-    function isAdmin(address user) external view returns (bool);
-}
-
+import {IAdminManagement} from "./interfaces/IAdminManagement.sol";
 contract EthereumDIDRegistry {
 
   mapping(address => address) public owners;
@@ -74,11 +71,6 @@ contract EthereumDIDRegistry {
     bytes value,
     uint validTo,
     uint previousChange
-  );
-  
-  event AdminChanged(
-    address indexed previousAdmin,
-    address indexed newAdmin
   );
 
   function identityOwner(address identity) public view returns(address) {

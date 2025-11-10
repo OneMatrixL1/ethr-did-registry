@@ -2,13 +2,13 @@
 
 pragma solidity ^0.8.28;
 
-import {IAdminManagement} from "../EthereumDIDRegistry.sol";
+import {IAdminManagement} from "./interfaces/IAdminManagement.sol";
 
 /**
- * @title MockAdminManagement
- * @dev Simple mock contract for testing admin functionality
+ * @title AdminManagement
+ * @dev Contract module which provides basic admin management functionalities.
  */
-contract MockAdminManagement is IAdminManagement {
+contract AdminManagement is IAdminManagement {
     
     error NotOwner();
     error ZeroAddress();

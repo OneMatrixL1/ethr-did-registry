@@ -43,8 +43,8 @@ describe('ERC1056', () => {
   let badBoy: SignerWithAddress // = accounts[5];
 
   before(async () => {
-    // Deploy mock admin management contract
-    const AdminManagement = await ethers.getContractFactory('MockAdminManagement')
+    // Deploy admin management contract
+    const AdminManagement = await ethers.getContractFactory('AdminManagement')
     ;[identity, identity2, delegate, delegate2, delegate3, badBoy] = await ethers.getSigners()
     adminManagement = await AdminManagement.deploy()
     await adminManagement.deployed()

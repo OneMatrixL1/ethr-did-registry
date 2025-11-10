@@ -16,11 +16,18 @@ async function main() {
   // await hre.run('compile');
 
   // We get the contract to deploy
+  const AdminManagementContract = await ethers.getContractFactory('AdminManagement')
+  const adminManagementInstance = await AdminManagementContract.deploy()
+  await adminManagementInstance.deployed()
+
   const RegistryContract = await ethers.getContractFactory('EthereumDIDRegistry')
-  const contractInstance = await RegistryContract.deploy()
+  const contractInstance = await RegistryContract.deploy(
+    adminManagementInstance.address // admin
+  )
 
   await contractInstance.deployed()
 
+  console.log('AdminManagementContract deployed to:', adminManagementInstance.address)
   console.log('RegistryContract deployed to:', contractInstance.address)
 }
 

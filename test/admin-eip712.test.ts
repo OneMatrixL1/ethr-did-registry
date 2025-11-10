@@ -22,8 +22,8 @@ describe('Admin and EIP-712 Functionality', () => {
   let attacker: SignerWithAddress
 
   before(async () => {
-    // Deploy mock admin management contract
-    const AdminManagement = await ethers.getContractFactory('MockAdminManagement')
+    // Deploy admin management contract
+    const AdminManagement = await ethers.getContractFactory('AdminManagement')
     ;[admin, identity, newOwner, attacker] = await ethers.getSigners()
     adminManagement = await AdminManagement.connect(admin).deploy()
     await adminManagement.deployed()
@@ -252,6 +252,23 @@ describe('Admin and EIP-712 Functionality', () => {
 
         const finalOwner = await didReg.identityOwner(identity.address)
         expect(finalOwner).to.equal(newOwner.address)
+      })
+
+      it('should reject zero address as new owner', async () => {
+        // Reset owner to identity
+        await didReg.connect(admin).adminChangeOwner(identity.address, identity.address)
+
+        const message = {
+          identity: identity.address,
+          newOwner: ethers.constants.AddressZero,
+        }
+
+        const signature = await identity._signTypedData(domain, changeOwnerTypes, message)
+        const { v, r, s } = ethers.utils.splitSignature(signature)
+
+        await expect(
+          didReg.connect(attacker).changeOwnerEIP712(identity.address, ethers.constants.AddressZero, v, r, s)
+        ).to.be.revertedWith('zero_owner')
       })
     })
 
