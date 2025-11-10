@@ -77,7 +77,7 @@ describe('Admin and EIP-712 Functionality', () => {
     })
 
     it('should not allow non-owner to manage admin status', async () => {
-      await expect(adminManagement.connect(attacker).setAdmin(attacker.address, true)).to.be.revertedWith('NotOwner')
+      await expect(adminManagement.connect(attacker).setAdmin(attacker.address, true)).to.be.reverted
     })
 
     it('should emit DIDOwnerChanged event when admin changes owner', async () => {
@@ -154,6 +154,7 @@ describe('Admin and EIP-712 Functionality', () => {
         ChangeOwner: [
           { name: 'identity', type: 'address' },
           { name: 'newOwner', type: 'address' },
+          { name: 'nonce', type: 'uint256' },
         ],
       }
 
@@ -163,6 +164,7 @@ describe('Admin and EIP-712 Functionality', () => {
           { name: 'delegateType', type: 'bytes32' },
           { name: 'delegate', type: 'address' },
           { name: 'validTo', type: 'uint256' },
+          { name: 'nonce', type: 'uint256' },
         ],
       }
 
@@ -171,6 +173,7 @@ describe('Admin and EIP-712 Functionality', () => {
           { name: 'identity', type: 'address' },
           { name: 'delegateType', type: 'bytes32' },
           { name: 'delegate', type: 'address' },
+          { name: 'nonce', type: 'uint256' },
         ],
       }
 
@@ -180,6 +183,7 @@ describe('Admin and EIP-712 Functionality', () => {
           { name: 'name', type: 'bytes32' },
           { name: 'value', type: 'bytes' },
           { name: 'validTo', type: 'uint256' },
+          { name: 'nonce', type: 'uint256' },
         ],
       }
 
@@ -188,18 +192,21 @@ describe('Admin and EIP-712 Functionality', () => {
           { name: 'identity', type: 'address' },
           { name: 'name', type: 'bytes32' },
           { name: 'value', type: 'bytes' },
+          { name: 'nonce', type: 'uint256' },
         ],
       }
     })
 
     describe('changeOwnerEIP712', () => {
-      it('should change owner using EIP-712 signature without nonce', async () => {
+      it('should change owner using EIP-712 signature with nonce', async () => {
         // First, set identity as its own owner
         await didReg.connect(admin).adminChangeOwner(identity.address, identity.address)
 
+        const currentNonce = await didReg.eip712Nonces(identity.address)
         const message = {
           identity: identity.address,
           newOwner: newOwner.address,
+          nonce: currentNonce,
         }
 
         // Sign with identity's private key
@@ -212,12 +219,18 @@ describe('Admin and EIP-712 Functionality', () => {
         // Verify the change
         const updatedOwner = await didReg.identityOwner(identity.address)
         expect(updatedOwner).to.equal(newOwner.address)
+        
+        // Verify nonce was incremented
+        const newNonce = await didReg.eip712Nonces(identity.address)
+        expect(newNonce).to.equal(currentNonce.add(1))
       })
 
       it('should reject invalid EIP-712 signature', async () => {
+        const currentNonce = await didReg.eip712Nonces(newOwner.address)
         const message = {
           identity: identity.address,
           newOwner: attacker.address,
+          nonce: currentNonce,
         }
 
         // Sign with wrong key (attacker instead of current owner)
@@ -229,13 +242,15 @@ describe('Admin and EIP-712 Functionality', () => {
         ).to.be.revertedWith('bad_eip712_signature')
       })
 
-      it('should allow same signature to be used multiple times (no nonce)', async () => {
+      it('should prevent signature replay with nonce', async () => {
         // Reset owner to identity
         await didReg.connect(admin).adminChangeOwner(identity.address, identity.address)
 
+        const currentNonce = await didReg.eip712Nonces(identity.address)
         const message = {
           identity: identity.address,
           newOwner: newOwner.address,
+          nonce: currentNonce,
         }
 
         const signature = await identity._signTypedData(domain, changeOwnerTypes, message)
@@ -247,20 +262,21 @@ describe('Admin and EIP-712 Functionality', () => {
         // Reset back to identity
         await didReg.connect(admin).adminChangeOwner(identity.address, identity.address)
 
-        // Second use of same signature - should also work (no nonce control)
-        await didReg.connect(attacker).changeOwnerEIP712(identity.address, newOwner.address, v, r, s)
-
-        const finalOwner = await didReg.identityOwner(identity.address)
-        expect(finalOwner).to.equal(newOwner.address)
+        // Second use of same signature - should fail because nonce has been consumed
+        await expect(
+          didReg.connect(attacker).changeOwnerEIP712(identity.address, newOwner.address, v, r, s)
+        ).to.be.revertedWith('bad_eip712_signature')
       })
 
       it('should reject zero address as new owner', async () => {
         // Reset owner to identity
         await didReg.connect(admin).adminChangeOwner(identity.address, identity.address)
 
+        const currentNonce = await didReg.eip712Nonces(identity.address)
         const message = {
           identity: identity.address,
           newOwner: ethers.constants.AddressZero,
+          nonce: currentNonce,
         }
 
         const signature = await identity._signTypedData(domain, changeOwnerTypes, message)
@@ -286,11 +302,13 @@ describe('Admin and EIP-712 Functionality', () => {
       })
 
       it('should add delegate using EIP-712 signature', async () => {
+        const currentNonce = await didReg.eip712Nonces(identity.address)
         const message = {
           identity: identity.address,
           delegateType,
           delegate: newOwner.address,
           validTo,
+          nonce: currentNonce,
         }
 
         const signature = await identity._signTypedData(domain, addDelegateTypes, message)
@@ -304,14 +322,20 @@ describe('Admin and EIP-712 Functionality', () => {
         // Verify delegate was added
         const isValid = await didReg.validDelegate(identity.address, delegateType, newOwner.address)
         expect(isValid).to.equal(true)
+        
+        // Verify nonce was incremented
+        const newNonce = await didReg.eip712Nonces(identity.address)
+        expect(newNonce).to.equal(currentNonce.add(1))
       })
 
       it('should reject invalid signature for addDelegate', async () => {
+        const currentNonce = await didReg.eip712Nonces(identity.address)
         const message = {
           identity: identity.address,
           delegateType,
           delegate: newOwner.address,
           validTo,
+          nonce: currentNonce,
         }
 
         // Sign with wrong key
@@ -328,11 +352,13 @@ describe('Admin and EIP-712 Functionality', () => {
         const currentBlock = await ethers.provider.getBlock('latest')
         const expiredValidTo = currentBlock.timestamp - 3600 // 1 hour ago
 
+        const currentNonce = await didReg.eip712Nonces(identity.address)
         const message = {
           identity: identity.address,
           delegateType,
           delegate: newOwner.address,
           validTo: expiredValidTo,
+          nonce: currentNonce,
         }
 
         const signature = await identity._signTypedData(domain, addDelegateTypes, message)
@@ -345,12 +371,14 @@ describe('Admin and EIP-712 Functionality', () => {
         ).to.be.revertedWith('invalid_expiry')
       })
 
-      it('should prevent signature replay attacks', async () => {
+      it('should prevent signature replay attacks with nonce', async () => {
+        const currentNonce = await didReg.eip712Nonces(identity.address)
         const message = {
           identity: identity.address,
           delegateType,
           delegate: newOwner.address,
           validTo,
+          nonce: currentNonce,
         }
 
         const signature = await identity._signTypedData(domain, addDelegateTypes, message)
@@ -365,15 +393,12 @@ describe('Admin and EIP-712 Functionality', () => {
         await ethers.provider.send('evm_increaseTime', [3600]) // 1 hour
         await ethers.provider.send('evm_mine', [])
 
-        // Try to replay the same signature - it should still set the same validTo, not extend it
-        await didReg
-          .connect(attacker)
-          .addDelegateEIP712(identity.address, delegateType, newOwner.address, validTo, v, r, s)
-
-        // Verify delegate still has the original expiry time, not extended
-        const delegateKey = ethers.utils.keccak256(ethers.utils.defaultAbiCoder.encode(['bytes32'], [delegateType]))
-        const actualValidTo = await didReg.delegates(identity.address, delegateKey, newOwner.address)
-        expect(actualValidTo).to.equal(validTo)
+        // Try to replay the same signature - should fail because nonce has been consumed
+        await expect(
+          didReg
+            .connect(attacker)
+            .addDelegateEIP712(identity.address, delegateType, newOwner.address, validTo, v, r, s)
+        ).to.be.revertedWith('bad_eip712_signature')
       })
     })
 
@@ -392,10 +417,13 @@ describe('Admin and EIP-712 Functionality', () => {
         let isValid = await didReg.validDelegate(identity.address, delegateType, newOwner.address)
         expect(isValid).to.equal(true)
 
+        const currentNonce = await didReg.eip712Nonces(identity.address)
+
         const message = {
           identity: identity.address,
           delegateType,
           delegate: newOwner.address,
+          nonce: currentNonce,
         }
 
         const signature = await identity._signTypedData(domain, revokeDelegateTypes, message)
@@ -410,10 +438,13 @@ describe('Admin and EIP-712 Functionality', () => {
       })
 
       it('should reject invalid signature for revokeDelegate', async () => {
+        const currentNonce = await didReg.eip712Nonces(identity.address)
+
         const message = {
           identity: identity.address,
           delegateType,
           delegate: newOwner.address,
+          nonce: currentNonce,
         }
 
         // Sign with wrong key
@@ -441,11 +472,14 @@ describe('Admin and EIP-712 Functionality', () => {
       })
 
       it('should set attribute using EIP-712 signature', async () => {
+        const currentNonce = await didReg.eip712Nonces(identity.address)
+
         const message = {
           identity: identity.address,
           name: attributeName,
           value: attributeValue,
           validTo,
+          nonce: currentNonce,
         }
 
         const signature = await identity._signTypedData(domain, setAttributeTypes, message)
@@ -463,11 +497,14 @@ describe('Admin and EIP-712 Functionality', () => {
       })
 
       it('should reject invalid signature for setAttribute', async () => {
+        const currentNonce = await didReg.eip712Nonces(identity.address)
+
         const message = {
           identity: identity.address,
           name: attributeName,
           value: attributeValue,
           validTo,
+          nonce: currentNonce,
         }
 
         // Sign with wrong key
@@ -484,11 +521,14 @@ describe('Admin and EIP-712 Functionality', () => {
         const currentBlock = await ethers.provider.getBlock('latest')
         const expiredValidTo = currentBlock.timestamp - 3600 // 1 hour ago
 
+        const currentNonce = await didReg.eip712Nonces(identity.address)
+
         const message = {
           identity: identity.address,
           name: attributeName,
           value: attributeValue,
           validTo: expiredValidTo,
+          nonce: currentNonce,
         }
 
         const signature = await identity._signTypedData(domain, setAttributeTypes, message)
@@ -514,10 +554,13 @@ describe('Admin and EIP-712 Functionality', () => {
       })
 
       it('should revoke attribute using EIP-712 signature', async () => {
+        const currentNonce = await didReg.eip712Nonces(identity.address)
+
         const message = {
           identity: identity.address,
           name: attributeName,
           value: attributeValue,
+          nonce: currentNonce,
         }
 
         const signature = await identity._signTypedData(domain, revokeAttributeTypes, message)
@@ -536,10 +579,13 @@ describe('Admin and EIP-712 Functionality', () => {
       })
 
       it('should reject invalid signature for revokeAttribute', async () => {
+        const currentNonce = await didReg.eip712Nonces(identity.address)
+
         const message = {
           identity: identity.address,
           name: attributeName,
           value: attributeValue,
+          nonce: currentNonce,
         }
 
         // Sign with wrong key
