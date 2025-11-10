@@ -46,7 +46,7 @@
     "ethereum-waffle": "^3.4.4",
     "ethereumjs-tx": "^2.1.2",
     "ethereumjs-util": "^7.1.5",
-    "ethers": "^5.7.2",
+    "ethers": "^5.8.0",
     "hardhat": "^2.26.1",
     "hardhat-gas-reporter": "^1.0.8",
     "ls": "^0.2.1",
