@@ -6,6 +6,8 @@ import {IAdminManagement} from "./interfaces/IAdminManagement.sol";
 contract EthereumDIDRegistry {
 
   mapping(address => address) public owners;
+  mapping(address => address) public issuers;
+
   mapping(address => mapping(bytes32 => mapping(address => uint))) public delegates;
   mapping(address => uint) public changed;
   mapping(address => uint) public nonce;
@@ -91,6 +93,8 @@ contract EthereumDIDRegistry {
     nonce[signer]++;
     return signer;
   }
+
+  // checkIssuerSignature not needed as issuer is always owner of identity
   
   function checkEIP712Signature(address expectedSigner, uint8 sigV, bytes32 sigR, bytes32 sigS, bytes32 structHash) internal view returns(address) {
     bytes32 hash = keccak256(abi.encodePacked(EIP191_HEADER, DOMAIN_SEPARATOR, structHash));
@@ -102,6 +106,90 @@ contract EthereumDIDRegistry {
   function validDelegate(address identity, bytes32 delegateType, address delegate) public view returns(bool) {
     uint validity = delegates[identity][keccak256(abi.encode(delegateType))][delegate];
     return (validity > block.timestamp);
+  }
+  
+  /**
+   * @notice Get issuer for an address-based identity
+   * @dev Returns issuers[identity] if set, else returns getOwner(identity)
+   * @param identity The identity address
+   * @return The issuer address
+   */
+  function getIssuer(address identity) public view returns(address) {
+    address issuer = issuers[identity];
+    if (issuer != address(0x00)) {
+      return issuer;
+    }
+    return identityOwner(identity);
+  }
+  
+  /**
+   * @notice Get owner from 40-byte identity (owner + issuer concatenated)
+   * @dev Extracts owner (first 20 bytes) and issuer (last 20 bytes)
+   *      Computes pId = keccak256(identity)
+   *      Returns owners[pId] if set, else returns extracted owner
+   * @param identity 40-byte identity (owner + issuer)
+   * @return The owner address
+   */
+  function getOwner(bytes memory identity) public view returns(address) {
+    require(identity.length == 40, "invalid_identity_length");
+    
+    // Extract owner (first 20 bytes)
+    address owner;
+    
+    assembly {
+      // Load first 20 bytes as owner (skip 32-byte length prefix)
+      owner := mload(add(identity, 20))
+    }
+    
+    // Compute pId = keccak256(identity)
+    address pId = address(uint160(uint256(keccak256(identity))));
+    
+    // If owners[pId] is set, return it
+    address registeredOwner = owners[pId];
+    if (registeredOwner != address(0x00)) {
+      return registeredOwner;
+    }
+    
+    // Otherwise return the extracted owner
+    return owner;
+  }
+  
+  /**
+   * @notice Get issuer from 40-byte identity (owner + issuer concatenated)
+   * @dev Extracts owner (first 20 bytes) and issuer (last 20 bytes)
+   *      Computes pId = keccak256(identity)
+   *      Returns issuers[pId] if set, else falls back to getOwner logic
+   * @param identity 40-byte identity (owner + issuer)
+   * @return The issuer address
+   */
+  function getIssuer(bytes memory identity) public view returns(address) {
+    require(identity.length == 40, "invalid_identity_length");
+    
+    // Extract issuer (last 20 bytes)
+    address issuer;
+    
+    assembly {
+      // Load last 20 bytes as issuer
+      issuer := mload(add(identity, 40))
+    }
+    
+    // Compute pId = keccak256(identity)
+    address pId = address(uint160(uint256(keccak256(identity))));
+    
+    // If issuers[pId] is set, return it
+    address registeredIssuer = issuers[pId];
+    if (registeredIssuer != address(0x00)) {
+      return registeredIssuer;
+    }
+    
+    // Otherwise fallback to getOwner logic (returns owners[pId] if set, else owner)
+    address registeredOwner = owners[pId];
+    if (registeredOwner != address(0x00)) {
+      return registeredOwner;
+    }
+    
+    // Return extracted issuer as final fallback
+    return issuer;
   }
 
   function changeOwner(address identity, address actor, address newOwner) internal onlyOwner(identity, actor) {

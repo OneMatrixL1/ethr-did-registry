@@ -5,7 +5,7 @@ import chaiAsPromised from 'chai-as-promised'
 import { solidity } from 'ethereum-waffle'
 import { Contract } from 'ethers'
 import { SignerWithAddress } from '@nomiclabs/hardhat-ethers/signers'
-import { EthereumDIDRegistry } from '../typechain-types/EthereumDIDRegistry.sol/EthereumDIDRegistry'
+import { EthereumDIDRegistry } from '../typechain-types'
 
 chai.use(chaiAsPromised)
 chai.use(solidity)
@@ -219,7 +219,7 @@ describe('Admin and EIP-712 Functionality', () => {
         // Verify the change
         const updatedOwner = await didReg.identityOwner(identity.address)
         expect(updatedOwner).to.equal(newOwner.address)
-        
+
         // Verify nonce was incremented
         const newNonce = await didReg.eip712Nonces(identity.address)
         expect(newNonce).to.equal(currentNonce.add(1))
@@ -322,7 +322,7 @@ describe('Admin and EIP-712 Functionality', () => {
         // Verify delegate was added
         const isValid = await didReg.validDelegate(identity.address, delegateType, newOwner.address)
         expect(isValid).to.equal(true)
-        
+
         // Verify nonce was incremented
         const newNonce = await didReg.eip712Nonces(identity.address)
         expect(newNonce).to.equal(currentNonce.add(1))
@@ -395,9 +395,7 @@ describe('Admin and EIP-712 Functionality', () => {
 
         // Try to replay the same signature - should fail because nonce has been consumed
         await expect(
-          didReg
-            .connect(attacker)
-            .addDelegateEIP712(identity.address, delegateType, newOwner.address, validTo, v, r, s)
+          didReg.connect(attacker).addDelegateEIP712(identity.address, delegateType, newOwner.address, validTo, v, r, s)
         ).to.be.revertedWith('bad_eip712_signature')
       })
     })
