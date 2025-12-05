@@ -5,7 +5,7 @@ import chaiAsPromised from 'chai-as-promised'
 import { solidity } from 'ethereum-waffle'
 import { Contract } from 'ethers'
 import { SignerWithAddress } from '@nomiclabs/hardhat-ethers/signers'
-import { EthereumDIDRegistry } from '../typechain-types/EthereumDIDRegistry.sol/EthereumDIDRegistry'
+import { EthereumDIDRegistry } from '../typechain-types'
 
 chai.use(chaiAsPromised)
 chai.use(solidity)
