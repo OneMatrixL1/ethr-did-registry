@@ -548,7 +548,9 @@ describe('Admin and EIP-712 Functionality', () => {
       beforeEach(async () => {
         // Ensure identity owns itself and set an attribute first
         await didReg.connect(admin).adminChangeOwner(identity.address, identity.address)
-        await didReg.connect(identity).setAttribute(identity.address, attributeName, attributeValue, 86400)
+        await didReg
+          .connect(identity)
+          ['setAttribute(address,bytes32,bytes,uint256)'](identity.address, attributeName, attributeValue, 86400)
       })
 
       it('should revoke attribute using EIP-712 signature', async () => {
