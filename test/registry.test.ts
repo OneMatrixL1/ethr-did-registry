@@ -24,7 +24,7 @@ import {
   DIDDelegateChangedEvent,
   DIDOwnerChangedEvent,
   EthereumDIDRegistry,
-} from '../typechain-types/EthereumDIDRegistry.sol/EthereumDIDRegistry'
+} from '../typechain-types/EthereumDIDRegistry'
 
 chai.use(chaiAsPromised)
 chai.use(solidity)
@@ -551,7 +551,12 @@ describe('ERC1056', () => {
           )
           tx = await didReg
             .connect(signer)
-            .setAttribute(identity.address, formatBytes32String('encryptionKey'), toUtf8Bytes('mykey'), 86400)
+            ['setAttribute(address,bytes32,bytes,uint256)'](
+              identity.address,
+              formatBytes32String('encryptionKey'),
+              toUtf8Bytes('mykey'),
+              86400
+            )
           block = await ethers.provider.getBlock((await tx.wait()).blockNumber)
         })
         it('should sets changed to transaction block', async () => {
@@ -576,7 +581,12 @@ describe('ERC1056', () => {
           await expect(
             didReg
               .connect(identity)
-              .setAttribute(identity.address, formatBytes32String('encryptionKey'), toUtf8Bytes('mykey'), 86400)
+              ['setAttribute(address,bytes32,bytes,uint256)'](
+                identity.address,
+                formatBytes32String('encryptionKey'),
+                toUtf8Bytes('mykey'),
+                86400
+              )
           ).to.be.rejectedWith(/bad_actor/)
         })
       })
@@ -586,7 +596,12 @@ describe('ERC1056', () => {
           await expect(
             didReg
               .connect(badBoy)
-              .setAttribute(identity.address, formatBytes32String('encryptionKey'), toUtf8Bytes('mykey'), 86400)
+              ['setAttribute(address,bytes32,bytes,uint256)'](
+                identity.address,
+                formatBytes32String('encryptionKey'),
+                toUtf8Bytes('mykey'),
+                86400
+              )
           ).to.be.rejectedWith(/bad_actor/)
         })
       })

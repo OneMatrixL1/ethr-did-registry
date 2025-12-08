@@ -146,8 +146,8 @@ contract EthereumDIDRegistry {
     address owner;
     
     assembly {
-      // Load first 20 bytes as owner (skip 32-byte length prefix)
-      owner := mload(add(identity, 20))
+      // Load first 20 bytes as owner (skip 32-byte length prefix, then shift)
+      owner := shr(96, mload(add(identity, 32)))
     }
     
     // Otherwise return the extracted owner
@@ -184,7 +184,9 @@ contract EthereumDIDRegistry {
     address issuer;
     
     assembly {
-      // Load last 20 bytes as issuer
+      // Load 32 bytes from position 40 (32-byte length + 20-byte owner - 12 bytes for alignment)
+      // This loads: last 12 bytes of owner + 20 bytes of issuer
+      // The issuer ends up in the rightmost 20 bytes (correct position for address)
       issuer := mload(add(identity, 40))
     }
     
@@ -289,12 +291,24 @@ contract EthereumDIDRegistry {
     changed[identity] = block.number;
   }
 
+  function setAttribute(bytes memory identity, address actor, bytes32 name, bytes memory value, uint validity ) internal {
+    address identityAddress = address(uint160(uint256(keccak256(identity))));
+    require (actor == identityOwner(identityAddress), "bad_actor");
+
+    emit DIDAttributeChanged(identityAddress, name, value, block.timestamp + validity, changed[identityAddress]);
+    changed[identityAddress] = block.number;
+  }
+
   function setAttribute(address identity, address actor, bytes32 name, bytes memory value, uint validity ) internal onlyOwner(identity, actor) {
     emit DIDAttributeChanged(identity, name, value, block.timestamp + validity, changed[identity]);
     changed[identity] = block.number;
   }
 
   function setAttribute(address identity, bytes32 name, bytes memory value, uint validity) public {
+    setAttribute(identity, msg.sender, name, value, validity);
+  }
+
+  function setAttribute(bytes memory identity, bytes32 name, bytes memory value, uint validity) public {
     setAttribute(identity, msg.sender, name, value, validity);
   }
 
