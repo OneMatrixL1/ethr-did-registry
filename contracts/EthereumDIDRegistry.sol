@@ -133,14 +133,6 @@ contract EthereumDIDRegistry {
   function getOwner(bytes memory identity) public view returns(address) {
     require(identity.length == 40, "invalid_identity_length");
     
-    // Extract owner (first 20 bytes)
-    address owner;
-    
-    assembly {
-      // Load first 20 bytes as owner (skip 32-byte length prefix)
-      owner := mload(add(identity, 20))
-    }
-    
     // Compute pId = keccak256(identity)
     address pId = address(uint160(uint256(keccak256(identity))));
     
@@ -148,6 +140,14 @@ contract EthereumDIDRegistry {
     address registeredOwner = owners[pId];
     if (registeredOwner != address(0x00)) {
       return registeredOwner;
+    }
+
+    // Extract owner (first 20 bytes)
+    address owner;
+    
+    assembly {
+      // Load first 20 bytes as owner (skip 32-byte length prefix)
+      owner := mload(add(identity, 20))
     }
     
     // Otherwise return the extracted owner
@@ -165,14 +165,6 @@ contract EthereumDIDRegistry {
   function getIssuer(bytes memory identity) public view returns(address) {
     require(identity.length == 40, "invalid_identity_length");
     
-    // Extract issuer (last 20 bytes)
-    address issuer;
-    
-    assembly {
-      // Load last 20 bytes as issuer
-      issuer := mload(add(identity, 40))
-    }
-    
     // Compute pId = keccak256(identity)
     address pId = address(uint160(uint256(keccak256(identity))));
     
@@ -186,6 +178,14 @@ contract EthereumDIDRegistry {
     address registeredOwner = owners[pId];
     if (registeredOwner != address(0x00)) {
       return registeredOwner;
+    }
+
+    // Extract issuer (last 20 bytes)
+    address issuer;
+    
+    assembly {
+      // Load last 20 bytes as issuer
+      issuer := mload(add(identity, 40))
     }
     
     // Return extracted issuer as final fallback
