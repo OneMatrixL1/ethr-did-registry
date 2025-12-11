@@ -191,7 +191,7 @@ describe('Admin and EIP-712 Functionality', () => {
 
         // Second use of same signature - should work (signature can be reused)
         await didReg.connect(attacker).changeOwnerEIP712(identity.address, newOwner.address, v, r, s)
-        
+
         // Verify the change worked
         const updatedOwner = await didReg.identityOwner(identity.address)
         expect(updatedOwner).to.equal(newOwner.address)

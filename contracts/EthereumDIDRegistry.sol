@@ -3,6 +3,8 @@
 pragma solidity ^0.8.28;
 
 import {IAdminManagement} from "./interfaces/IAdminManagement.sol";
+import {BLS2} from "@onematrix/bls-solidity/src/libraries/BLS2.sol";
+
 contract EthereumDIDRegistry {
 
   mapping(address => address) public owners;
@@ -87,8 +89,15 @@ contract EthereumDIDRegistry {
     return signer;
   }
 
-  // checkIssuerSignature not needed as issuer is always owner of identity
-  
+  function checkBlsSignature(bytes memory publicKeyBytes, bytes calldata messageBytes, bytes calldata signatureBytes) public view returns(bool success) {
+    BLS2.PointG2 memory publicKey = BLS2.g2Unmarshal(publicKeyBytes);
+    BLS2.PointG1 memory message = BLS2.g1Unmarshal(messageBytes);
+    BLS2.PointG1 memory signature = BLS2.g1Unmarshal(signatureBytes);
+
+    (bool pairingSuccess, bool callSuccess) = BLS2.verifySingle(signature, publicKey, message);
+    return pairingSuccess && callSuccess;
+  }
+
   function checkEIP712Signature(address expectedSigner, uint8 sigV, bytes32 sigR, bytes32 sigS, bytes32 structHash) internal view returns(address) {
     bytes32 hash = keccak256(abi.encodePacked(EIP191_HEADER, DOMAIN_SEPARATOR, structHash));
     address signer = ecrecover(hash, sigV, sigR, sigS);

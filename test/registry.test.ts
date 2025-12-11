@@ -24,7 +24,7 @@ import {
   DIDDelegateChangedEvent,
   DIDOwnerChangedEvent,
   EthereumDIDRegistry,
-} from '../typechain-types/EthereumDIDRegistry'
+} from '../typechain-types/contracts/EthereumDIDRegistry'
 
 chai.use(chaiAsPromised)
 chai.use(solidity)
