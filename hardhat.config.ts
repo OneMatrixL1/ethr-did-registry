@@ -45,6 +45,15 @@ const config: HardhatUserConfig = {
     artifacts: './artifacts',
   },
   networks: {
+    hardhat: {
+      forking: process.env.FORK_NETWORK
+        ? {
+            url: process.env.FORK_NETWORK,
+            enabled: true,
+          }
+        : undefined,
+      allowUnlimitedContractSize: true,
+    },
     ropsten: {
       url: process.env.ROPSTEN_URL || '',
       accounts: process.env.PRIVATE_KEY !== undefined ? [process.env.PRIVATE_KEY] : [],
