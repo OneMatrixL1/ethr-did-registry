@@ -13,7 +13,7 @@ contract EthereumDIDRegistry {
   mapping(address => mapping(bytes32 => mapping(address => uint))) public delegates;
   mapping(address => uint) public changed;
   mapping(address => uint) public nonce;
-  
+
   // Admin Management contract address
   address public adminManagement;
 
@@ -30,7 +30,7 @@ contract EthereumDIDRegistry {
     require (actor == identityOwner(identity), "bad_actor");
     _;
   }
-  
+
   modifier onlyAdmin() {
     require(IAdminManagement(adminManagement).isAdmin(msg.sender), "only_admin");
     _;
@@ -74,6 +74,10 @@ contract EthereumDIDRegistry {
     uint previousChange
   );
 
+  function getIdentityFromPublicKey(bytes memory publicKey) public pure returns (address) {
+      return address(uint160(uint256(keccak256(publicKey))));
+  }
+
   function identityOwner(address identity) public view returns(address) {
      address owner = owners[identity];
      if (owner != address(0x00)) {
@@ -89,12 +93,13 @@ contract EthereumDIDRegistry {
     return signer;
   }
 
-  function checkBlsSignature(bytes memory publicKeyBytes, bytes calldata messageBytes, bytes calldata signatureBytes) public view returns(bool success) {
+  function checkBlsSignature(bytes memory publicKeyBytes, bytes memory signatureBytes, bytes32 messageHash) public view returns(bool success) {
     BLS2.PointG2 memory publicKey = BLS2.g2Unmarshal(publicKeyBytes);
-    BLS2.PointG1 memory message = BLS2.g1Unmarshal(messageBytes);
     BLS2.PointG1 memory signature = BLS2.g1Unmarshal(signatureBytes);
 
-    (bool pairingSuccess, bool callSuccess) = BLS2.verifySingle(signature, publicKey, message);
+    BLS2.PointG1 memory messagePoint = BLS2.hashToPoint(messageHash);
+
+    (bool pairingSuccess, bool callSuccess) = BLS2.verifySingle(signature, publicKey, messagePoint);
     return pairingSuccess && callSuccess;
   }
 
@@ -109,7 +114,7 @@ contract EthereumDIDRegistry {
     uint validity = delegates[identity][keccak256(abi.encode(delegateType))][delegate];
     return (validity > block.timestamp);
   }
-  
+
   /**
    * @notice Get issuer for an address-based identity
    * @dev Returns issuers[identity] if set, else returns getOwner(identity)
@@ -123,7 +128,7 @@ contract EthereumDIDRegistry {
     }
     return identityOwner(identity);
   }
-  
+
   /**
    * @notice Get owner from 40-byte identity (owner + issuer concatenated)
    * @dev Extracts owner (first 20 bytes) and issuer (last 20 bytes)
@@ -134,10 +139,10 @@ contract EthereumDIDRegistry {
    */
   function getOwner(bytes memory identity) public view returns(address) {
     require(identity.length == 40, "invalid_identity_length");
-    
+
     // Compute pId = keccak256(identity)
     address pId = address(uint160(uint256(keccak256(identity))));
-    
+
     // If owners[pId] is set, return it
     address registeredOwner = owners[pId];
     if (registeredOwner != address(0x00)) {
@@ -146,16 +151,16 @@ contract EthereumDIDRegistry {
 
     // Extract owner (first 20 bytes)
     address owner;
-    
+
     assembly {
       // Load first 20 bytes as owner (skip 32-byte length prefix, then shift)
       owner := shr(96, mload(add(identity, 32)))
     }
-    
+
     // Otherwise return the extracted owner
     return owner;
   }
-  
+
   /**
    * @notice Get issuer from 40-byte identity (owner + issuer concatenated)
    * @dev Extracts owner (first 20 bytes) and issuer (last 20 bytes)
@@ -166,16 +171,16 @@ contract EthereumDIDRegistry {
    */
   function getIssuer(bytes memory identity) public view returns(address) {
     require(identity.length == 40, "invalid_identity_length");
-    
+
     // Compute pId = keccak256(identity)
     address pId = address(uint160(uint256(keccak256(identity))));
-    
+
     // If issuers[pId] is set, return it
     address registeredIssuer = issuers[pId];
     if (registeredIssuer != address(0x00)) {
       return registeredIssuer;
     }
-    
+
     // Otherwise fallback to getOwner logic (returns owners[pId] if set, else owner)
     address registeredOwner = owners[pId];
     if (registeredOwner != address(0x00)) {
@@ -184,14 +189,14 @@ contract EthereumDIDRegistry {
 
     // Extract issuer (last 20 bytes)
     address issuer;
-    
+
     assembly {
       // Load 32 bytes from position 40 (32-byte length + 20-byte owner - 12 bytes for alignment)
       // This loads: last 12 bytes of owner + 20 bytes of issuer
       // The issuer ends up in the rightmost 20 bytes (correct position for address)
       issuer := mload(add(identity, 40))
     }
-    
+
     // Return extracted issuer as final fallback
     return issuer;
   }
@@ -210,19 +215,53 @@ contract EthereumDIDRegistry {
     bytes32 hash = keccak256(abi.encodePacked(bytes1(0x19), bytes1(0), this, nonce[identityOwner(identity)], identity, "changeOwner", newOwner));
     changeOwner(identity, checkSignature(identity, sigV, sigR, sigS, hash), newOwner);
   }
-  
+
   // Admin function to change owner
   function adminChangeOwner(address identity, address newOwner) public onlyAdmin {
     owners[identity] = newOwner;
     emit DIDOwnerChanged(identity, newOwner, changed[identity]);
     changed[identity] = block.number;
   }
-  
+
+  // BLS signature version with nonce control
+  function changeOwnerBLS(
+      bytes memory publicKey,
+      bytes memory signature,
+      address newOwner
+  ) public {
+      require(newOwner != address(0), "zero_owner_address");
+
+      address identity = getIdentityFromPublicKey(publicKey);
+
+      address currentOwner = identityOwner(identity);
+
+      require(currentOwner == identity, "identity_controlled_by_external_address");
+
+      bytes32 messageHash = keccak256(
+          abi.encodePacked(
+              identity,
+              newOwner,
+              nonce[identity],
+              block.chainid
+          )
+      );
+
+      require(checkBlsSignature(publicKey, signature, messageHash), "invalid_bls_signature");
+
+      nonce[identity]++;
+
+      owners[identity] = newOwner;
+
+      emit DIDOwnerChanged(identity, newOwner, changed[identity]);
+
+      changed[identity] = block.number;
+  }
+
   // EIP-712 signature version without nonce control
   function changeOwnerEIP712(address identity, address newOwner, uint8 sigV, bytes32 sigR, bytes32 sigS) public {
     require(newOwner != address(0), "zero_owner");
     address currentOwner = identityOwner(identity);
-    
+
     bytes32 structHash = keccak256(abi.encode(CHANGE_OWNER_TYPEHASH, identity, newOwner));
     checkEIP712Signature(currentOwner, sigV, sigR, sigS, structHash);
 
@@ -236,6 +275,43 @@ contract EthereumDIDRegistry {
     emit DIDDelegateChanged(identity, delegateType, delegate, block.timestamp + validity, changed[identity]);
     changed[identity] = block.number;
   }
+
+  // function addDelegateBLS(
+  //     bytes memory publicKey,
+  //     bytes memory signature,
+  //     bytes32 delegateType,
+  //     address delegate,
+  //     uint validity
+  // ) public {
+  //     address identity = getIdentityFromPublicKey(publicKey);
+
+  //     address currentOwner = identityOwner(identity);
+
+  //     require(currentOwner == identity, "identity_controlled_by_external_address");
+
+  //     uint validTo = block.timestamp + validity;
+
+  //     bytes32 messageHash = keccak256(
+  //         abi.encodePacked(
+  //             identity,
+  //             delegateType,
+  //             delegate,
+  //             validTo,
+  //             nonce[identity],
+  //             block.chainid
+  //         )
+  //     );
+
+  //     require(checkBlsSignature(publicKey, signature, messageHash), "invalid_bls_signature");
+
+  //     nonce[identity]++;
+
+  //     delegates[identity][keccak256(abi.encode(delegateType))][delegate] = validTo;
+
+  //     emit DIDDelegateChanged(identity, delegateType, delegate, validTo, changed[identity]);
+
+  //     changed[identity] = block.number;
+  // }
 
   function addDelegate(address identity, bytes32 delegateType, address delegate, uint validity) public {
     addDelegate(identity, msg.sender, delegateType, delegate, validity);
