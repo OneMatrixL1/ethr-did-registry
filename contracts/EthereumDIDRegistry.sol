@@ -26,6 +26,9 @@ contract EthereumDIDRegistry {
   // EIP-712 TypeHash
   bytes32 public constant CHANGE_OWNER_TYPEHASH = keccak256("ChangeOwner(address identity,address newOwner)");
 
+  // BLS DST
+  bytes public constant BLS_DST = bytes("ETH_DID_REGISTRY_BLS_SIG_V1");
+
   modifier onlyOwner(address identity, address actor) {
     require (actor == identityOwner(identity), "bad_actor");
     _;
@@ -97,7 +100,7 @@ contract EthereumDIDRegistry {
     BLS2.PointG2 memory publicKey = BLS2.g2Unmarshal(publicKeyBytes);
     BLS2.PointG1 memory signature = BLS2.g1Unmarshal(signatureBytes);
 
-    BLS2.PointG1 memory messagePoint = BLS2.hashToPoint(messageHash);
+    BLS2.PointG1 memory messagePoint = BLS2.hashToPoint(BLS_DST, messageHash);
 
     (bool pairingSuccess, bool callSuccess) = BLS2.verifySingle(signature, publicKey, messagePoint);
     return pairingSuccess && callSuccess;
