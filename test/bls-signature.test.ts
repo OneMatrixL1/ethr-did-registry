@@ -19,24 +19,22 @@ describe('BLS Signature Verification', () => {
   let adminManagement: Contract
   let admin: SignerWithAddress
 
-  // Valid BLS signature test data from test/data/bls_signature.json
+  // Valid BLS signature test data
   // Message: "Hello world!"
   // Curve: BLS12-381
+  // DST: BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_
   const validTestVectors = [
     {
       description: 'valid BLS signature for "Hello world!"',
-      // G2 Public Key - 192 bytes (PK_X1 + PK_X0 + PK_Y1 + PK_Y0) - trying reversed component order
+      // G2 Public Key - 192 bytes (PK_X1 + PK_X0 + PK_Y1 + PK_Y0)
       publicKey:
         '0x' +
         '032e5b9e02a090923681a5d44919e16995db40f86497754406e5afc39802ae33e2c367a3a147c6a55d6531ebb6af5dbf' +
         '0adf7abd27b86ae1436498c6fa09c91369d5d971ab8e2e76d6d3f9355dc2b16435bec7de51ee143757cfcceab694285a' +
         '0905b345c36460d605e56d778ceba70dd5569930d2c3b545800e0fc9ffdfa7fb02623647f7831f2a510e4de563f2428e' +
         '126d23e78717d0b8fbbeefd51add8724c47ea5b205d5491d7cc99f5529fd1d1e1b7a6d8205336edad346cebd1f5fba21',
-      // G1 Message Hash - 96 bytes (MSG_X + MSG_Y)
-      message:
-        '0x' +
-        '09a2b398bf9ce05c9fda6259ba841cdffc0968fac19f40f0675715af729f6863254b38b9b7dcef3b26fd6ae6b7735c0d' +
-        '0ade5e1de908850477190730e2503719b0119a9b1c403fcbe425af1f25bbb7b1a099c87009721cd8e4a6b8e3c3a8465c',
+      // Raw message - contract will hash this to G1 point using DST
+      rawMessage: 'Hello world!',
       // G1 Signature - 96 bytes (SIG_X + SIG_Y)
       signature:
         '0x' +
@@ -48,7 +46,7 @@ describe('BLS Signature Verification', () => {
   before(async () => {
     // Deploy admin management contract
     const AdminManagement = await ethers.getContractFactory('AdminManagement')
-    ;[admin] = await ethers.getSigners()
+      ;[admin] = await ethers.getSigners()
     adminManagement = await AdminManagement.connect(admin).deploy()
     await adminManagement.deployed()
 
@@ -61,8 +59,9 @@ describe('BLS Signature Verification', () => {
   describe('checkBlsSignature', () => {
     it('should verify a valid BLS signature', async () => {
       const testVector = validTestVectors[0]
+      const messageBytes = ethers.utils.toUtf8Bytes(testVector.rawMessage)
 
-      const result = await didReg.checkBlsSignature(testVector.publicKey, testVector.message, testVector.signature)
+      const result = await didReg.checkBlsSignature(testVector.publicKey, testVector.signature, messageBytes)
 
       // Should return true for valid signature
       expect(result).to.equal(true)
@@ -77,8 +76,8 @@ describe('BLS Signature Verification', () => {
       const testVector = validTestVectors[0]
 
       try {
-        const result = await didReg.checkBlsSignature(testVector.publicKey, testVector.message, invalidSignature)
-
+        const messageBytes = ethers.utils.toUtf8Bytes(testVector.rawMessage)
+        const result = await didReg.checkBlsSignature(testVector.publicKey, invalidSignature, messageBytes)
         // Should return false for invalid signature
         expect(result).to.equal(false)
       } catch (error: any) {
@@ -96,7 +95,7 @@ describe('BLS Signature Verification', () => {
       const testVector = validTestVectors[0]
 
       try {
-        const result = await didReg.checkBlsSignature(testVector.publicKey, wrongMessage, testVector.signature)
+        const result = await didReg.checkBlsSignature(testVector.publicKey, testVector.signature, wrongMessage)
 
         // Should return false for wrong message
         expect(result).to.equal(false)
@@ -116,7 +115,8 @@ describe('BLS Signature Verification', () => {
       const testVector = validTestVectors[0]
 
       try {
-        const result = await didReg.checkBlsSignature(wrongPublicKey, testVector.message, testVector.signature)
+        const messageBytes = ethers.utils.toUtf8Bytes(testVector.rawMessage)
+        const result = await didReg.checkBlsSignature(wrongPublicKey, testVector.signature, messageBytes)
 
         // Should return false for wrong public key
         expect(result).to.equal(false)
@@ -142,7 +142,8 @@ describe('BLS Signature Verification', () => {
       const malformedPublicKey = '0x' + 'a0a0a0a0' // Too short
 
       try {
-        await didReg.checkBlsSignature(malformedPublicKey, testVector.message, testVector.signature)
+        const messageBytes = ethers.utils.toUtf8Bytes(testVector.rawMessage)
+        await didReg.checkBlsSignature(malformedPublicKey, testVector.signature, messageBytes)
         // Should fail
         expect.fail('Should have reverted with malformed public key')
       } catch (error: any) {
@@ -156,7 +157,7 @@ describe('BLS Signature Verification', () => {
       const malformedMessage = '0x' + 'b0b0b0b0' // Too short
 
       try {
-        await didReg.checkBlsSignature(testVector.publicKey, malformedMessage, testVector.signature)
+        await didReg.checkBlsSignature(testVector.publicKey, testVector.signature, malformedMessage)
         // Should fail
         expect.fail('Should have reverted with malformed message')
       } catch (error: any) {
@@ -170,7 +171,8 @@ describe('BLS Signature Verification', () => {
       const malformedSignature = '0x' + 'c0c0c0c0' // Too short
 
       try {
-        await didReg.checkBlsSignature(testVector.publicKey, testVector.message, malformedSignature)
+        const messageBytes = ethers.utils.toUtf8Bytes(testVector.rawMessage)
+        await didReg.checkBlsSignature(testVector.publicKey, malformedSignature, messageBytes)
         // Should fail
         expect.fail('Should have reverted with malformed signature')
       } catch (error: any) {
@@ -186,10 +188,11 @@ describe('BLS Signature Verification', () => {
 
       try {
         // View functions don't require gas when called off-chain
+        const messageBytes = ethers.utils.toUtf8Bytes(testVector.rawMessage)
         const result = await didReg.callStatic.checkBlsSignature(
           testVector.publicKey,
-          testVector.message,
-          testVector.signature
+          testVector.signature,
+          messageBytes
         )
 
         expect(result).to.be.a('boolean')
@@ -205,9 +208,10 @@ describe('BLS Signature Verification', () => {
 
       try {
         // Any user should be able to call this public view function
+        const messageBytes = ethers.utils.toUtf8Bytes(testVector.rawMessage)
         const result = await didReg
           .connect(randomUser)
-          .checkBlsSignature(testVector.publicKey, testVector.message, testVector.signature)
+          .checkBlsSignature(testVector.publicKey, testVector.signature, messageBytes)
 
         expect(result).to.be.a('boolean')
       } catch (error: any) {
@@ -216,19 +220,6 @@ describe('BLS Signature Verification', () => {
       }
     })
   })
-
-  // TODO: Add real BLS test vectors
-  // To generate valid test vectors, use a BLS library like:
-  // - noble-bls12-381 (JavaScript)
-  // - py_ecc (Python)
-  // - blst (C/Rust)
-  //
-  // Example workflow:
-  // 1. Generate a BLS key pair
-  // 2. Sign a message with the private key
-  // 3. Marshal the public key, message, and signature to bytes
-  // 4. Use those bytes in the tests above
-  //
-  // Make sure the BLS implementation matches the curve and parameters
-  // used by the BLS2 library from @onematrix/bls-solidity
 })
+
+

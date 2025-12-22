@@ -27,7 +27,7 @@ contract EthereumDIDRegistry {
   bytes32 public constant CHANGE_OWNER_TYPEHASH = keccak256("ChangeOwner(address identity,address newOwner)");
 
   // BLS DST
-  bytes public constant BLS_DST = bytes("ETH_DID_REGISTRY_BLS_SIG_V1");
+  bytes public constant BLS_DST = bytes("BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_");
 
   modifier onlyOwner(address identity, address actor) {
     require (actor == identityOwner(identity), "bad_actor");
@@ -96,11 +96,11 @@ contract EthereumDIDRegistry {
     return signer;
   }
 
-  function checkBlsSignature(bytes memory publicKeyBytes, bytes memory signatureBytes, bytes32 messageHash) public view returns(bool success) {
+  function checkBlsSignature(bytes memory publicKeyBytes, bytes memory signatureBytes, bytes memory message) public view returns(bool success) {
     BLS2.PointG2 memory publicKey = BLS2.g2Unmarshal(publicKeyBytes);
     BLS2.PointG1 memory signature = BLS2.g1Unmarshal(signatureBytes);
 
-    BLS2.PointG1 memory messagePoint = BLS2.hashToPoint(BLS_DST, messageHash);
+    BLS2.PointG1 memory messagePoint = BLS2.hashToPoint(BLS_DST, message);
 
     (bool pairingSuccess, bool callSuccess) = BLS2.verifySingle(signature, publicKey, messagePoint);
     return pairingSuccess && callSuccess;
@@ -240,18 +240,18 @@ contract EthereumDIDRegistry {
 
       require(currentOwner == identity, "identity_controlled_by_external_address");
 
-      bytes32 messageHash = keccak256(
-          abi.encodePacked(
-              identity,
-              newOwner,
-              nonce[identity],
-              block.chainid
-          )
+      bytes memory message = abi.encodePacked(
+          identity,
+          newOwner,
+          nonce[identity],
+          block.chainid
       );
 
-      require(checkBlsSignature(publicKey, signature, messageHash), "invalid_bls_signature");
+      require(checkBlsSignature(publicKey, signature, message), "invalid_bls_signature");
 
-      nonce[identity]++;
+      unchecked {
+          nonce[identity]++;
+      }
 
       owners[identity] = newOwner;
 
@@ -279,42 +279,6 @@ contract EthereumDIDRegistry {
     changed[identity] = block.number;
   }
 
-  // function addDelegateBLS(
-  //     bytes memory publicKey,
-  //     bytes memory signature,
-  //     bytes32 delegateType,
-  //     address delegate,
-  //     uint validity
-  // ) public {
-  //     address identity = getIdentityFromPublicKey(publicKey);
-
-  //     address currentOwner = identityOwner(identity);
-
-  //     require(currentOwner == identity, "identity_controlled_by_external_address");
-
-  //     uint validTo = block.timestamp + validity;
-
-  //     bytes32 messageHash = keccak256(
-  //         abi.encodePacked(
-  //             identity,
-  //             delegateType,
-  //             delegate,
-  //             validTo,
-  //             nonce[identity],
-  //             block.chainid
-  //         )
-  //     );
-
-  //     require(checkBlsSignature(publicKey, signature, messageHash), "invalid_bls_signature");
-
-  //     nonce[identity]++;
-
-  //     delegates[identity][keccak256(abi.encode(delegateType))][delegate] = validTo;
-
-  //     emit DIDDelegateChanged(identity, delegateType, delegate, validTo, changed[identity]);
-
-  //     changed[identity] = block.number;
-  // }
 
   function addDelegate(address identity, bytes32 delegateType, address delegate, uint validity) public {
     addDelegate(identity, msg.sender, delegateType, delegate, validity);
