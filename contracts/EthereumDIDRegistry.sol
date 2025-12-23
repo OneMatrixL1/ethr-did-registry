@@ -20,11 +20,17 @@ contract EthereumDIDRegistry {
   // EIP-712 Domain Separator
   bytes32 public immutable DOMAIN_SEPARATOR;
 
+  // BLS EIP-712 Domain Separator (separate from ECDSA for cross-scheme protection)
+  bytes32 public immutable BLS_DOMAIN_SEPARATOR;
+
   // Magic prefix for EIP-191 / EIP-712 typed data
   bytes2 internal constant EIP191_HEADER = 0x1901;
 
   // EIP-712 TypeHash
   bytes32 public constant CHANGE_OWNER_TYPEHASH = keccak256("ChangeOwner(address identity,address newOwner)");
+
+  // BLS EIP-712 TypeHash
+  bytes32 public constant BLS_CHANGE_OWNER_TYPEHASH = keccak256("BLSChangeOwner(address identity,address newOwner,uint256 nonce)");
 
   // BLS DST
   bytes public constant BLS_DST = bytes("BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_");
@@ -48,6 +54,17 @@ contract EthereumDIDRegistry {
       abi.encode(
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
         keccak256(bytes("EthereumDIDRegistry")),
+        keccak256(bytes("1")),
+        block.chainid,
+        address(this)
+      )
+    );
+
+    // Initialize BLS EIP-712 domain separator (different name for cross-scheme protection)
+    BLS_DOMAIN_SEPARATOR = keccak256(
+      abi.encode(
+        keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+        keccak256(bytes("EthereumDIDRegistry-BLS")),
         keccak256(bytes("1")),
         block.chainid,
         address(this)
@@ -96,13 +113,23 @@ contract EthereumDIDRegistry {
     return signer;
   }
 
-  function checkBlsSignature(bytes memory publicKeyBytes, bytes memory signatureBytes, bytes memory message) public view returns(bool success) {
+  function checkBlsSignature(bytes memory publicKeyBytes, bytes memory signatureBytes, bytes32 structHash) public view returns(bool success) {
     BLS2.PointG2 memory publicKey = BLS2.g2Unmarshal(publicKeyBytes);
+
     BLS2.PointG1 memory signature = BLS2.g1Unmarshal(signatureBytes);
 
-    BLS2.PointG1 memory messagePoint = BLS2.hashToPoint(BLS_DST, message);
+    // Create EIP-712 style digest
+    bytes32 digest = keccak256(abi.encodePacked(
+        EIP191_HEADER,
+        BLS_DOMAIN_SEPARATOR,
+        structHash
+    ));
+
+    // Hash digest to G1 point using BLS DST
+    BLS2.PointG1 memory messagePoint = BLS2.hashToPoint(BLS_DST, abi.encodePacked(digest));
 
     (bool pairingSuccess, bool callSuccess) = BLS2.verifySingle(signature, publicKey, messagePoint);
+
     return pairingSuccess && callSuccess;
   }
 
@@ -226,7 +253,7 @@ contract EthereumDIDRegistry {
     changed[identity] = block.number;
   }
 
-  // BLS signature version with nonce control
+  // BLS signature version with nonce control (EIP-712 style)
   function changeOwnerBLS(
       bytes memory publicKey,
       bytes memory signature,
@@ -240,14 +267,14 @@ contract EthereumDIDRegistry {
 
       require(currentOwner == identity, "identity_controlled_by_external_address");
 
-      bytes memory message = abi.encodePacked(
+      bytes32 structHash = keccak256(abi.encode(
+          BLS_CHANGE_OWNER_TYPEHASH,
           identity,
           newOwner,
-          nonce[identity],
-          block.chainid
-      );
+          nonce[identity]
+      ));
 
-      require(checkBlsSignature(publicKey, signature, message), "invalid_bls_signature");
+      require(checkBlsSignature(publicKey, signature, structHash), "invalid_bls_signature");
 
       unchecked {
           nonce[identity]++;
