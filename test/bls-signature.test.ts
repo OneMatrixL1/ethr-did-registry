@@ -61,17 +61,10 @@ describe('BLS Signature Verification (EIP-712 Style)', () => {
   })
 
   describe('EIP-712 Domain Separator', () => {
-    it('should have BLS_DOMAIN_SEPARATOR initialized', async () => {
-      const blsDomainSeparator = await didReg.BLS_DOMAIN_SEPARATOR()
-
-      expect(blsDomainSeparator).to.not.equal(ethers.constants.HashZero)
-    })
-
-    it('should have different BLS_DOMAIN_SEPARATOR from DOMAIN_SEPARATOR', async () => {
+    it('should have DOMAIN_SEPARATOR initialized', async () => {
       const domainSeparator = await didReg.DOMAIN_SEPARATOR()
-      const blsDomainSeparator = await didReg.BLS_DOMAIN_SEPARATOR()
 
-      expect(domainSeparator).to.not.equal(blsDomainSeparator)
+      expect(domainSeparator).to.not.equal(ethers.constants.HashZero)
     })
 
     it('should have BLS_CHANGE_OWNER_TYPEHASH constant', async () => {

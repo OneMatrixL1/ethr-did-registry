@@ -20,9 +20,6 @@ contract EthereumDIDRegistry {
   // EIP-712 Domain Separator
   bytes32 public immutable DOMAIN_SEPARATOR;
 
-  // BLS EIP-712 Domain Separator (separate from ECDSA for cross-scheme protection)
-  bytes32 public immutable BLS_DOMAIN_SEPARATOR;
-
   // Magic prefix for EIP-191 / EIP-712 typed data
   bytes2 internal constant EIP191_HEADER = 0x1901;
 
@@ -54,17 +51,6 @@ contract EthereumDIDRegistry {
       abi.encode(
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
         keccak256(bytes("EthereumDIDRegistry")),
-        keccak256(bytes("1")),
-        block.chainid,
-        address(this)
-      )
-    );
-
-    // Initialize BLS EIP-712 domain separator (different name for cross-scheme protection)
-    BLS_DOMAIN_SEPARATOR = keccak256(
-      abi.encode(
-        keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
-        keccak256(bytes("EthereumDIDRegistry-BLS")),
         keccak256(bytes("1")),
         block.chainid,
         address(this)
@@ -121,7 +107,7 @@ contract EthereumDIDRegistry {
     // Create EIP-712 style digest
     bytes32 digest = keccak256(abi.encodePacked(
         EIP191_HEADER,
-        BLS_DOMAIN_SEPARATOR,
+        DOMAIN_SEPARATOR,
         structHash
     ));
 
@@ -255,17 +241,19 @@ contract EthereumDIDRegistry {
 
   // BLS signature version with nonce control (EIP-712 style)
   function changeOwnerBLS(
+      address identity,
       bytes memory publicKey,
       bytes memory signature,
       address newOwner
   ) public {
       require(newOwner != address(0), "zero_owner_address");
 
-      address identity = getIdentityFromPublicKey(publicKey);
-
       address currentOwner = identityOwner(identity);
 
-      require(currentOwner == identity, "identity_controlled_by_external_address");
+      // Verify publicKey corresponds to current owner (identity itself or its owner)
+      address publicKeyAddress = getIdentityFromPublicKey(publicKey);
+
+      require(publicKeyAddress == currentOwner, "public_key_not_owner");
 
       bytes32 structHash = keccak256(abi.encode(
           BLS_CHANGE_OWNER_TYPEHASH,
