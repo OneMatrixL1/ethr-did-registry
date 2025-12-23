@@ -27,7 +27,7 @@ contract EthereumDIDRegistry {
   bytes32 public constant CHANGE_OWNER_TYPEHASH = keccak256("ChangeOwner(address identity,address newOwner)");
 
   // BLS EIP-712 TypeHash
-  bytes32 public constant BLS_CHANGE_OWNER_TYPEHASH = keccak256("BLSChangeOwner(address identity,address newOwner,uint256 nonce)");
+  bytes32 public constant BLS_CHANGE_OWNER_TYPEHASH = keccak256("BLSChangeOwner(address identity,address newOwner)");
 
   // BLS DST
   bytes public constant BLS_DST = bytes("BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_");
@@ -239,7 +239,7 @@ contract EthereumDIDRegistry {
     changed[identity] = block.number;
   }
 
-  // BLS signature version with nonce control (EIP-712 style)
+  // BLS signature version (EIP-712 style)
   function changeOwnerBLS(
       address identity,
       bytes memory publicKey,
@@ -258,15 +258,10 @@ contract EthereumDIDRegistry {
       bytes32 structHash = keccak256(abi.encode(
           BLS_CHANGE_OWNER_TYPEHASH,
           identity,
-          newOwner,
-          nonce[identity]
+          newOwner
       ));
 
       require(checkBlsSignature(publicKey, signature, structHash), "invalid_bls_signature");
-
-      unchecked {
-          nonce[identity]++;
-      }
 
       owners[identity] = newOwner;
 
