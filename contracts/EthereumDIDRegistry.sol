@@ -13,7 +13,6 @@ contract EthereumDIDRegistry {
   mapping(address => mapping(bytes32 => mapping(address => uint))) public delegates;
   mapping(address => uint) public changed;
   mapping(address => uint) public nonce;
-
   // Admin Management contract address
   address public adminManagement;
 
@@ -23,8 +22,9 @@ contract EthereumDIDRegistry {
   // Magic prefix for EIP-191 / EIP-712 typed data
   bytes2 internal constant EIP191_HEADER = 0x1901;
 
-  // EIP-712 TypeHash
+  // EIP-712 TypeHashes
   bytes32 public constant CHANGE_OWNER_TYPEHASH = keccak256("ChangeOwner(address identity,address newOwner)");
+  bytes32 public constant CHANGE_OWNER_WITH_PUBKEY_TYPEHASH = keccak256("ChangeOwnerWithPubkey(address identity,address signer,address newOwner,uint256 nonce)");
 
   // BLS EIP-712 TypeHash
   bytes32 public constant BLS_CHANGE_OWNER_TYPEHASH = keccak256("BLSChangeOwner(address identity,address newOwner)");
@@ -117,6 +117,33 @@ contract EthereumDIDRegistry {
     (bool pairingSuccess, bool callSuccess) = BLS2.verifySingle(signature, publicKey, messagePoint);
 
     return pairingSuccess && callSuccess;
+  }
+
+  /**
+   * @notice Derive an Ethereum address from a public key
+   * @dev For BLS12-381 (96-byte G2 pubkey): keccak256(pubkey)[last 20 bytes]
+   * @param publicKeyBytes The public key bytes
+   * @return The derived Ethereum address
+   */
+  function publicKeyToAddress(bytes memory publicKeyBytes) internal pure returns(address) {
+    if (publicKeyBytes.length == 96) {
+      // BLS12-381 G2 public key: keccak256 hash, take last 20 bytes
+      bytes32 hash = keccak256(publicKeyBytes);
+      return address(uint160(uint256(hash)));
+    }
+    revert("unsupported_pubkey_type");
+  }
+
+  /**
+   * @notice Internal wrapper for BLS signature verification
+   * @dev Converts memory arrays to the format expected by checkBlsSignature
+   * @param publicKeyBytes The public key bytes
+   * @param messageBytes The message as G1 point
+   * @param signatureBytes The signature bytes
+   */
+  function _verifyBlsSignature(bytes memory publicKeyBytes, bytes memory messageBytes, bytes memory signatureBytes) internal view {
+    bool valid = checkBlsSignature(publicKeyBytes, messageBytes, signatureBytes);
+    require(valid, "bad_signature");
   }
 
   function checkEIP712Signature(address expectedSigner, uint8 sigV, bytes32 sigR, bytes32 sigS, bytes32 structHash) internal view returns(address) {
@@ -278,6 +305,62 @@ contract EthereumDIDRegistry {
     bytes32 structHash = keccak256(abi.encode(CHANGE_OWNER_TYPEHASH, identity, newOwner));
     checkEIP712Signature(currentOwner, sigV, sigR, sigS, structHash);
 
+    owners[identity] = newOwner;
+    emit DIDOwnerChanged(identity, newOwner, changed[identity]);
+    changed[identity] = block.number;
+  }
+
+  /**
+   * @notice Change owner using public key signature (supports BLS12-381 and future curves)
+   * @dev Verifies EIP-712 signature with nonce protection
+   * @param identity The DID identity being modified
+   * @param newOwner The new owner address
+   * @param pubkeyNonceParam The nonce value committed to in the signature
+   * @param publicKey The public key (length determines signature type)
+   * @param signature The signature over the EIP-712 hash
+   */
+  function changeOwnerWithPubkey(
+    address identity,
+    address newOwner,
+    uint256 pubkeyNonceParam,
+    bytes calldata publicKey,
+    bytes calldata signature
+  ) external {
+    require(newOwner != address(0), "invalid_new_owner");
+
+    // Derive signer address from public key
+    address signer = publicKeyToAddress(abi.encodePacked(publicKey));
+
+    // Verify signer is the current owner
+    address currentOwner = identityOwner(identity);
+    require(signer == currentOwner, "unauthorized");
+
+    // Verify nonce matches
+    require(pubkeyNonce[signer] == pubkeyNonceParam, "invalid_nonce");
+
+    // Construct and verify EIP-712 signature
+    bytes32 structHash = keccak256(abi.encode(CHANGE_OWNER_WITH_PUBKEY_TYPEHASH, identity, signer, newOwner, pubkeyNonceParam));
+    bytes32 hash = keccak256(abi.encodePacked(EIP191_HEADER, DOMAIN_SEPARATOR, structHash));
+
+    // Convert calldata signature to memory for verification
+    bytes memory sig = signature;
+
+    // Route verification based on public key length
+    if (publicKey.length == 96) {
+      // BLS12-381 verification
+      // Hash needs to be converted to G1 point for BLS verification
+      BLS2.PointG1 memory message = BLS2.hashToPoint("BLS_DST", abi.encodePacked(hash));
+      bytes memory messageBytes = BLS2.g1Marshal(message);
+
+      // Verify BLS signature
+      bytes memory pubkeyBytes = abi.encodePacked(publicKey);
+      _verifyBlsSignature(pubkeyBytes, messageBytes, sig);
+    } else {
+      revert("unsupported_pubkey_type");
+    }
+
+    // Increment nonce and update owner
+    pubkeyNonce[signer]++;
     owners[identity] = newOwner;
     emit DIDOwnerChanged(identity, newOwner, changed[identity]);
     changed[identity] = block.number;
