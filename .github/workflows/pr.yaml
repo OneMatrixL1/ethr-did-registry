@@ -233,22 +233,19 @@ jobs:
               const branchName = '${{ github.event.inputs.source_branch }}';
 
               // Generate PR title and description
-              const prPrompt = 'You are a PR analyzer. Output ONLY valid JSON, no commentary.\n\n' +
-                'DATA:\n' +
-                'Branch: ' + branchName + '\n' +
-                'Commits:\n' + commits + '\n' +
-                'Diff Stats:\n' + diffStat + '\n' +
-                'Code Changes:\n' + diff + '\n\n' +
-                'TASK: Generate PR title (max 72 chars) and description (markdown)\n\n' +
-                'RULES:\n' +
-                '- NO reasoning\n' +
-                '- NO thinking process\n' +
-                '- NO explanations\n' +
-                '- NO preamble\n' +
-                '- ONLY JSON output\n\n' +
-                'Required JSON format:\n' +
-                '{"title":"PR title here","description":"Description in markdown"}\n\n' +
-                'JSON:';
+              const prPrompt = 'Analyze this pull request and generate a concise title and overview description.\n\n' +
+                'Branch: ' + branchName + '\n\n' +
+                'Commits:\n' + commits + '\n\n' +
+                'Diff Stats:\n' + diffStat + '\n\n' +
+                'Code Changes (sample):\n' + diff + '\n\n' +
+                'Please provide:\n' +
+                '1. A clear, concise PR title (max 72 characters) that summarizes the main change\n' +
+                '2. A overview description in markdown format that short but informatively describes the changes made in this PR, including key modifications and their purpose.\n\n' +
+                'Format your response EXACTLY as JSON with no additional text:\n' +
+                '{\n' +
+                '  "title": "PR title here",\n' +
+                '  "description": "PR description here in markdown format"\n' +
+                '}';
 
               // Generate PR content with retry
               const { response: aiResponse, model: prModel } = await callWithRetry(models, prPrompt, false);
@@ -267,21 +264,28 @@ jobs:
 
               // Generate celebration message with retry
               const authorUsername = '${{ github.actor }}';
-              const celebrationPrompt = 'You are a greeting generator. Output ONLY the greeting, no commentary.\n\n' +
-                'Task: Generate a fun greeting (1-2 sentences) for @' + authorUsername + ' celebrating their PR.\n' +
-                'Must include: @' + authorUsername + ', enthusiasm, intro to a poem, end with : or !\n' +
-                'May include: emojis\n\n' +
-                'RULES:\n' +
-                '- NO reasoning\n' +
-                '- NO thinking process\n' +
-                '- NO explanations\n' +
-                '- NO preamble\n' +
-                '- JUST the greeting\n\n' +
-                'Example greeting: "Hey @' + authorUsername + '! 🎉 Here\'s some code poetry for you:"\n\n' +
-                'Greeting:';
+              const celebrationPrompt = 'Generate a fun greeting for @' + authorUsername + ' celebrating their pull request.\n\n' +
+                'Requirements:\n' +
+                '- Mention @' + authorUsername + '\n' +
+                '- Be enthusiastic\n' +
+                '- Introduce a poem that follows\n' +
+                '- End with colon (:) or exclamation mark (!)\n' +
+                '- May include emojis\n' +
+                '- 1-2 sentences\n\n' +
+                'Format your response EXACTLY as JSON with no additional text:\n' +
+                '{\n' +
+                '  "greeting": "Hey @' + authorUsername + '! 🎉 Here\'s some code poetry for you:"\n' +
+                '}';
 
-              const { response: celebrationMessage, model: celebrationModel } = await callWithRetry(models, celebrationPrompt, true);
-              const cleanedCelebration = celebrationMessage.replace(/```[\s\S]*?```/g, '').trim();
+              const { response: celebrationResponse, model: celebrationModel } = await callWithRetry(models, celebrationPrompt, true);
+
+              const celebrationJsonMatch = celebrationResponse.replace(/```[\s\S]*?```/g, '').match(/\{[\s\S]*\}/);
+              if (!celebrationJsonMatch) {
+                throw new Error('Failed to extract JSON from celebration response');
+              }
+
+              const celebrationData = JSON.parse(celebrationJsonMatch[0]);
+              const cleanedCelebration = celebrationData.greeting;
 
               // Generate funny poem with retry
               const poemPrompt = 'Write a short, funny, humorous poem (4-8 lines) about this pull request.\n\n' +
