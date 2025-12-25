@@ -264,11 +264,18 @@ jobs:
 
               // Generate celebration message with retry
               const authorUsername = '${{ github.actor }}';
-              const celebrationPrompt = 'Write a short, fun greeting for @' + authorUsername + ' to celebrate their pull request. ' +
-                'Requirements: mention @' + authorUsername + ', be enthusiastic, introduce a poem that follows, end with colon (:) or exclamation mark (!). ' +
-                'Use emojis if appropriate.\n\n' +
-                'CRITICAL: Output ONLY the final greeting text. DO NOT include reasoning, thinking process, or explanations before or after.\n\n' +
-                'Example: "Hey @' + authorUsername + '! 🎉 Here\'s some code poetry for you:"\n\n';
+              const celebrationPrompt = 'You are a greeting generator. Output ONLY the greeting, no commentary.\n\n' +
+                'Task: Generate a fun greeting (1-2 sentences) for @' + authorUsername + ' celebrating their PR.\n' +
+                'Must include: @' + authorUsername + ', enthusiasm, intro to a poem, end with : or !\n' +
+                'May include: emojis\n\n' +
+                'RULES:\n' +
+                '- NO reasoning\n' +
+                '- NO thinking process\n' +
+                '- NO explanations\n' +
+                '- NO preamble\n' +
+                '- JUST the greeting\n\n' +
+                'Example greeting: "Hey @' + authorUsername + '! 🎉 Here\'s some code poetry for you:"\n\n' +
+                'Greeting:';
 
               const { response: celebrationMessage, model: celebrationModel } = await callWithRetry(models, celebrationPrompt, true);
               const cleanedCelebration = celebrationMessage.replace(/```[\s\S]*?```/g, '').trim();
