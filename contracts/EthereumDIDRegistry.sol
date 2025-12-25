@@ -501,7 +501,7 @@ contract EthereumDIDRegistry {
     // Hash message to G2 point (inverted from current G1 hashing)
     BLS2.PointG2 memory message = hashToPointG2("BLS_DST", abi.encodePacked(hash));
 
-    // Unmarshal G2 signature
+    // Unmarshal G2 signature (must be uncompressed 192 bytes - BLS2 library does not support G2 compression)
     BLS2.PointG2 memory sig = BLS2.g2Unmarshal(signature);
 
     // Verify inverted pairing: e(pubkey_G1, message_G2) = e(G1_gen, sig_G2)
