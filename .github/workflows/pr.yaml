@@ -15,7 +15,7 @@ on:
 
 jobs:
   create-pr:
-    runs-on: ubuntu-latest
+    runs-on: eks-osiris-runners
     permissions:
       contents: write
       pull-requests: write
