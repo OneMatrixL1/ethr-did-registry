@@ -94,7 +94,7 @@ contract EthereumDIDRegistry {
     return signer;
   }
 
-  function checkBlsSignature(bytes memory publicKeyBytes, bytes memory messageBytes, bytes memory signatureBytes) public view returns(bool success) {
+  function checkBlsSignature(bytes calldata publicKeyBytes, bytes calldata messageBytes, bytes calldata signatureBytes) public view returns(bool success) {
     BLS2.PointG2 memory publicKey = BLS2.g2Unmarshal(publicKeyBytes);
 
     BLS2.PointG1 memory signature = BLS2.g1Unmarshal(signatureBytes);
@@ -120,25 +120,13 @@ contract EthereumDIDRegistry {
    * @param publicKeyBytes The public key bytes
    * @return The derived Ethereum address
    */
-  function publicKeyToAddress(bytes memory publicKeyBytes) internal pure returns(address) {
+  function publicKeyToAddress(bytes calldata publicKeyBytes) internal pure returns(address) {
     if (publicKeyBytes.length == 96) {
       // BLS12-381 G2 public key: keccak256 hash, take last 20 bytes
       bytes32 hash = keccak256(publicKeyBytes);
       return address(uint160(uint256(hash)));
     }
     revert("unsupported_pubkey_type");
-  }
-
-  /**
-   * @notice Internal wrapper for BLS signature verification
-   * @dev Converts memory arrays to the format expected by checkBlsSignature
-   * @param publicKeyBytes The public key bytes
-   * @param messageBytes The message as G1 point
-   * @param signatureBytes The signature bytes
-   */
-  function _verifyBlsSignature(bytes memory publicKeyBytes, bytes memory messageBytes, bytes memory signatureBytes) internal view {
-    bool valid = checkBlsSignature(publicKeyBytes, messageBytes, signatureBytes);
-    require(valid, "bad_signature");
   }
 
   function checkEIP712Signature(address expectedSigner, uint8 sigV, bytes32 sigR, bytes32 sigS, bytes32 structHash) internal view returns(address) {
@@ -453,7 +441,7 @@ contract EthereumDIDRegistry {
     require(newOwner != address(0), "invalid_new_owner");
 
     // Derive signer address from public key
-    address signer = publicKeyToAddress(abi.encodePacked(publicKey));
+    address signer = publicKeyToAddress(publicKey);
 
     // Verify signer is the current owner
     require(signer == identityOwner(identity), "unauthorized");
@@ -461,26 +449,20 @@ contract EthereumDIDRegistry {
     // Verify oldOwner matches current owner (replay protection via owner change)
     require(oldOwner == identityOwner(identity), "invalid_owner");
 
-    // Construct and verify EIP-712 signature
+    // Route verification based on public key length
+    require(publicKey.length == 96, "unsupported_pubkey_type");
+
+    // Construct EIP-712 hash
     bytes32 structHash = keccak256(abi.encode(CHANGE_OWNER_WITH_PUBKEY_TYPEHASH, identity, oldOwner, newOwner));
     bytes32 hash = keccak256(abi.encodePacked(EIP191_HEADER, DOMAIN_SEPARATOR, structHash));
 
-    // Convert calldata signature to memory for verification
-    bytes memory sig = signature;
+    // BLS12-381 verification: convert hash to G1 point and verify
+    BLS2.PointG1 memory message = BLS2.hashToPoint("BLS_DST", abi.encodePacked(hash));
+    BLS2.PointG2 memory pubkey = BLS2.g2Unmarshal(publicKey);
+    BLS2.PointG1 memory sig = BLS2.g1Unmarshal(signature);
 
-    // Route verification based on public key length
-    if (publicKey.length == 96) {
-      // BLS12-381 verification
-      // Hash needs to be converted to G1 point for BLS verification
-      BLS2.PointG1 memory message = BLS2.hashToPoint("BLS_DST", abi.encodePacked(hash));
-      bytes memory messageBytes = BLS2.g1Marshal(message);
-
-      // Verify BLS signature
-      bytes memory pubkeyBytes = abi.encodePacked(publicKey);
-      _verifyBlsSignature(pubkeyBytes, messageBytes, sig);
-    } else {
-      revert("unsupported_pubkey_type");
-    }
+    (bool pairingSuccess, bool callSuccess) = BLS2.verifySingle(sig, pubkey, message);
+    require(pairingSuccess && callSuccess, "bad_signature");
 
     // Update owner
     owners[identity] = newOwner;
