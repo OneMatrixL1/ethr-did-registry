@@ -13,7 +13,6 @@ contract EthereumDIDRegistry {
   mapping(address => mapping(bytes32 => mapping(address => uint))) public delegates;
   mapping(address => uint) public changed;
   mapping(address => uint) public nonce;
-  mapping(address => uint) public pubkeyNonce;
   
   // Admin Management contract address
   address public adminManagement;
@@ -26,7 +25,7 @@ contract EthereumDIDRegistry {
 
   // EIP-712 TypeHashes
   bytes32 public constant CHANGE_OWNER_TYPEHASH = keccak256("ChangeOwner(address identity,address newOwner)");
-  bytes32 public constant CHANGE_OWNER_WITH_PUBKEY_TYPEHASH = keccak256("ChangeOwnerWithPubkey(address identity,address signer,address newOwner,uint256 nonce)");
+  bytes32 public constant CHANGE_OWNER_WITH_PUBKEY_TYPEHASH = keccak256("ChangeOwnerWithPubkey(address identity,address oldOwner,address newOwner)");
 
   modifier onlyOwner(address identity, address actor) {
     require (actor == identityOwner(identity), "bad_actor");
@@ -444,19 +443,10 @@ contract EthereumDIDRegistry {
     changed[identity] = block.number;
   }
 
-  /**
-   * @notice Change owner using public key signature (supports BLS12-381 and future curves)
-   * @dev Verifies EIP-712 signature with nonce protection
-   * @param identity The DID identity being modified
-   * @param newOwner The new owner address
-   * @param pubkeyNonceParam The nonce value committed to in the signature
-   * @param publicKey The public key (length determines signature type)
-   * @param signature The signature over the EIP-712 hash
-   */
   function changeOwnerWithPubkey(
     address identity,
+    address oldOwner,
     address newOwner,
-    uint256 pubkeyNonceParam,
     bytes calldata publicKey,
     bytes calldata signature
   ) external {
@@ -466,14 +456,13 @@ contract EthereumDIDRegistry {
     address signer = publicKeyToAddress(abi.encodePacked(publicKey));
 
     // Verify signer is the current owner
-    address currentOwner = identityOwner(identity);
-    require(signer == currentOwner, "unauthorized");
+    require(signer == identityOwner(identity), "unauthorized");
 
-    // Verify nonce matches
-    require(pubkeyNonce[signer] == pubkeyNonceParam, "invalid_nonce");
+    // Verify oldOwner matches current owner (replay protection via owner change)
+    require(oldOwner == identityOwner(identity), "invalid_owner");
 
     // Construct and verify EIP-712 signature
-    bytes32 structHash = keccak256(abi.encode(CHANGE_OWNER_WITH_PUBKEY_TYPEHASH, identity, signer, newOwner, pubkeyNonceParam));
+    bytes32 structHash = keccak256(abi.encode(CHANGE_OWNER_WITH_PUBKEY_TYPEHASH, identity, oldOwner, newOwner));
     bytes32 hash = keccak256(abi.encodePacked(EIP191_HEADER, DOMAIN_SEPARATOR, structHash));
 
     // Convert calldata signature to memory for verification
@@ -493,8 +482,7 @@ contract EthereumDIDRegistry {
       revert("unsupported_pubkey_type");
     }
 
-    // Increment nonce and update owner
-    pubkeyNonce[signer]++;
+    // Update owner
     owners[identity] = newOwner;
     emit DIDOwnerChanged(identity, newOwner, changed[identity]);
     changed[identity] = block.number;
