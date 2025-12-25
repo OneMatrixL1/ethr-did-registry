@@ -1,0 +1,382 @@
+name: Create Pull Request
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_branch:
+        description: 'Source branch name'
+        required: true
+        type: string
+      target_branch:
+        description: 'Target branch name'
+        required: true
+        type: string
+        default: 'develop'
+
+jobs:
+  create-pr:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate PR content and poem
+        id: generate-content
+        uses: actions/github-script@v7
+        env:
+          BEDROCK_API_KEY: ${{ secrets.BEDROCK_API_KEY }}
+          AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+        with:
+          github-token: ${{ secrets.GH_PAT }}
+          script: |
+            const { execSync } = require('child_process');
+            const https = require('https');
+
+            // Helper function to call Bedrock API
+            async function callBedrock(modelId, requestBody) {
+              const region = process.env.AWS_REGION;
+              const hostname = `bedrock-runtime.${region}.amazonaws.com`;
+
+              return await new Promise((resolve, reject) => {
+                const options = {
+                  hostname: hostname,
+                  path: `/model/${modelId}/invoke`,
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${process.env.BEDROCK_API_KEY}`,
+                    'Content-Length': Buffer.byteLength(requestBody)
+                  }
+                };
+
+                const req = https.request(options, (res) => {
+                  let data = '';
+                  res.on('data', chunk => data += chunk);
+                  res.on('end', () => {
+                    if (res.statusCode === 200) {
+                      try {
+                        resolve(JSON.parse(data));
+                      } catch (e) {
+                        reject(new Error(`Failed to parse response: ${data}`));
+                      }
+                    } else {
+                      reject(new Error(`Bedrock API error ${res.statusCode}: ${data}`));
+                    }
+                  });
+                });
+
+                req.on('error', reject);
+                req.write(requestBody);
+                req.end();
+              });
+            }
+
+            // Helper function to extract response based on model type
+            function extractResponse(response, responseKey) {
+              if (responseKey === 'generation') {
+                return response.generation;
+              } else if (responseKey === 'output.message.content[0].text') {
+                return response.output?.message?.content?.[0]?.text;
+              } else if (responseKey === 'outputs[0].text') {
+                return response.outputs?.[0]?.text;
+              } else if (responseKey === 'choices[0].message.content') {
+                return response.choices?.[0]?.message?.content;
+              } else {
+                return response.generation ||
+                       response.output?.message?.content?.[0]?.text ||
+                       response.outputs?.[0]?.text ||
+                       response.choices?.[0]?.message?.content ||
+                       response.completions?.[0]?.data?.text;
+              }
+            }
+
+            // Helper function to retry with different models on failure
+            async function callWithRetry(models, prompt, creative, maxRetries = 3) {
+              const failedModels = [];
+              let lastError;
+
+              for (let attempt = 0; attempt < maxRetries; attempt++) {
+                // Select a model that hasn't failed yet
+                const availableModels = models.filter(m => !failedModels.includes(m.id));
+                if (availableModels.length === 0) {
+                  throw new Error(`All models failed. Last error: ${lastError}`);
+                }
+
+                const model = availableModels[Math.floor(Math.random() * availableModels.length)];
+                core.info(`Attempt ${attempt + 1}: Using ${model.name} (${model.id})`);
+
+                try {
+                  const requestBody = JSON.stringify(model.buildRequest(prompt, creative));
+                  const response = await callBedrock(model.id, requestBody);
+                  const extracted = extractResponse(response, model.responseKey);
+
+                  if (!extracted) {
+                    throw new Error('Could not extract response from model output');
+                  }
+
+                  // Success!
+                  if (failedModels.length > 0) {
+                    core.warning(`Previous models failed: ${failedModels.join(', ')}`);
+                  }
+                  return { response: extracted, model: model };
+
+                } catch (error) {
+                  lastError = error.message;
+                  failedModels.push(model.id);
+                  core.warning(`${model.name} failed: ${error.message}`);
+
+                  if (attempt < maxRetries - 1) {
+                    core.info(`Retrying with a different model...`);
+                  }
+                }
+              }
+
+              throw new Error(`Failed after ${maxRetries} attempts. Last error: ${lastError}`);
+            }
+
+            // Define available models
+            const models = [
+              {
+                id: 'mistral.mistral-large-3-675b-instruct',
+                name: 'Mistral Large 3 675B Instruct',
+                buildRequest: (prompt, creative = false) => ({
+                  messages: [{ role: 'user', content: prompt }],
+                  max_tokens: creative ? 1024 : 2048,
+                  temperature: creative ? 0.9 : 0.7,
+                  top_p: creative ? 0.95 : 0.9
+                }),
+                responseKey: 'choices[0].message.content'
+              },
+              {
+                id: 'google.gemma-3-27b-it',
+                name: 'Google Gemma 3 27B PT',
+                buildRequest: (prompt, creative = false) => ({
+                  messages: [{ role: 'user', content: prompt }],
+                  max_tokens: creative ? 1024 : 2048,
+                  temperature: creative ? 0.9 : 0.7,
+                  top_p: creative ? 0.95 : 0.9
+                }),
+                responseKey: 'choices[0].message.content'
+              },
+              {
+                id: 'ai21.jamba-1-5-large-v1:0',
+                name: 'AI21 Jamba 1.5 Large',
+                buildRequest: (prompt, creative = false) => ({
+                  messages: [{ role: 'user', content: prompt }],
+                  max_tokens: creative ? 1024 : 2048,
+                  temperature: creative ? 0.9 : 0.7,
+                  top_p: creative ? 0.95 : 0.9
+                }),
+                responseKey: 'choices[0].message.content'
+              },
+              {
+                id: 'qwen.qwen3-coder-30b-a3b-v1:0',
+                name: 'Qwen 3 Coder 30B A3B Instruct',
+                buildRequest: (prompt, creative = false) => ({
+                  messages: [{ role: 'user', content: prompt }],
+                  max_tokens: creative ? 1024 : 2048,
+                  temperature: creative ? 0.9 : 0.7,
+                  top_p: creative ? 0.95 : 0.9
+                }),
+                responseKey: 'choices[0].message.content'
+              },
+              {
+                id: 'openai.gpt-oss-120b-1:0',
+                name: 'GPT-OSS 120B',
+                buildRequest: (prompt, creative = false) => ({
+                  messages: [{ role: 'user', content: prompt }],
+                  max_tokens: creative ? 1024 : 2048,
+                  temperature: creative ? 0.9 : 0.7,
+                  top_p: creative ? 0.95 : 0.9
+                }),
+                responseKey: 'choices[0].message.content'
+              },
+              {
+                id: 'minimax.minimax-m2',
+                name: 'MiniMax M2',
+                buildRequest: (prompt, creative = false) => ({
+                  messages: [{ role: 'user', content: prompt }],
+                  max_tokens: creative ? 1024 : 2048,
+                  temperature: creative ? 0.9 : 0.7,
+                  top_p: creative ? 0.95 : 0.9
+                }),
+                responseKey: 'choices[0].message.content'
+              }
+            ];
+
+            try {
+              // Fetch git data
+              execSync(`git fetch origin ${{ github.event.inputs.source_branch }}`);
+              execSync(`git fetch origin ${{ github.event.inputs.target_branch }}`);
+
+              const commits = execSync(
+                `git log origin/${{ github.event.inputs.target_branch }}..origin/${{ github.event.inputs.source_branch }} --pretty=format:"- %s (%an)"`,
+                { encoding: 'utf-8' }
+              );
+
+              const diffStat = execSync(
+                `git diff origin/${{ github.event.inputs.target_branch }}...origin/${{ github.event.inputs.source_branch }} --stat`,
+                { encoding: 'utf-8' }
+              );
+
+              const diff = execSync(
+                `git diff origin/${{ github.event.inputs.target_branch }}...origin/${{ github.event.inputs.source_branch }} | head -n 500`,
+                { encoding: 'utf-8' }
+              );
+
+              const branchName = '${{ github.event.inputs.source_branch }}';
+
+              // Generate PR title and description
+              const prPrompt = 'Analyze this pull request and generate a concise title and overview description.\n\n' +
+                'Branch: ' + branchName + '\n\n' +
+                'Commits:\n' + commits + '\n\n' +
+                'Diff Stats:\n' + diffStat + '\n\n' +
+                'Code Changes (sample):\n' + diff + '\n\n' +
+                'Please provide:\n' +
+                '1. A clear, concise PR title (max 72 characters) that summarizes the main change\n' +
+                '2. A overview description in markdown format that short but informatively describes the changes made in this PR, including key modifications and their purpose.\n\n' +
+                'Format your response EXACTLY as JSON with no additional text:\n' +
+                '{\n' +
+                '  "title": "PR title here",\n' +
+                '  "description": "PR description here in markdown format"\n' +
+                '}';
+
+              // Generate PR content with retry
+              const { response: aiResponse, model: prModel } = await callWithRetry(models, prPrompt, false);
+
+              const jsonMatch = aiResponse.match(/\{[\s\S]*\}/);
+              if (!jsonMatch) {
+                throw new Error('Failed to extract JSON from AI response');
+              }
+
+              const result = JSON.parse(jsonMatch[0]);
+              const description = result.description + '\n\n---\n\n*Generated by: **' + prModel.name + '** (`' + prModel.id + '`)*';
+
+              core.setOutput('title', result.title);
+              core.setOutput('description', description);
+              core.setOutput('pr_model', prModel.name);
+
+              // Generate celebration message with retry
+              const authorUsername = '${{ github.actor }}';
+              const celebrationPrompt = 'Write a short, fun greeting for @' + authorUsername + ' to celebrate their pull request. ' +
+                'Requirements: mention @' + authorUsername + ', be enthusiastic, introduce a poem that follows, end with colon (:) or exclamation mark (!). ' +
+                'Use emojis if appropriate.\n\n' +
+                'CRITICAL: Output ONLY the final greeting text. DO NOT include reasoning, thinking process, or explanations before or after.\n\n' +
+                'Example: "Hey @' + authorUsername + '! 🎉 Here\'s some code poetry for you:"\n\n';
+
+              const { response: celebrationMessage, model: celebrationModel } = await callWithRetry(models, celebrationPrompt, true);
+              const cleanedCelebration = celebrationMessage.replace(/```[\s\S]*?```/g, '').trim();
+
+              // Generate funny poem with retry
+              const poemPrompt = 'Write a short, funny, humorous poem (4-8 lines) about this pull request.\n\n' +
+                'PR Title: ' + result.title + '\n' +
+                'PR Description: ' + result.description + '\n\n' +
+                'The poem should be:\n' +
+                '- Lighthearted and playful about the changes in this PR\n' +
+                '- Humorous and witty, making fun of coding quirks or the development process\n' +
+                '- Related to what was actually changed (bugs fixed, features added, refactoring, etc.)\n' +
+                '- Creative and entertaining\n\n' +
+                'Write only the poem, no explanations or additional text.';
+
+              const { response: poem, model: poemModel } = await callWithRetry(models, poemPrompt, true);
+              const cleanedPoem = poem.replace(/```[\s\S]*?```/g, '').trim();
+
+              core.setOutput('celebration_message', cleanedCelebration);
+              core.setOutput('celebration_model', celebrationModel.name);
+              core.setOutput('celebration_model_id', celebrationModel.id);
+              core.setOutput('poem', cleanedPoem);
+              core.setOutput('poem_model', poemModel.name);
+              core.setOutput('poem_model_id', poemModel.id);
+
+              core.notice(`Generated PR content with ${prModel.name}`);
+              core.notice(`Generated celebration with ${celebrationModel.name}`);
+              core.notice(`Generated poem with ${poemModel.name}`);
+
+            } catch (error) {
+              core.setFailed(`Error generating content: ${error.message}`);
+              if (error.stack) {
+                core.error(error.stack);
+              }
+            }
+
+      - name: Create Pull Request
+        id: create-pr
+        uses: actions/github-script@v7
+        env:
+          PR_TITLE: ${{ steps.generate-content.outputs.title }}
+          PR_DESCRIPTION: ${{ steps.generate-content.outputs.description }}
+          SOURCE_BRANCH: ${{ github.event.inputs.source_branch }}
+          TARGET_BRANCH: ${{ github.event.inputs.target_branch }}
+          ACTOR: ${{ github.actor }}
+        with:
+          github-token: ${{ secrets.GH_PAT }}
+          script: |
+            const title = process.env.PR_TITLE;
+            const description = process.env.PR_DESCRIPTION;
+
+            const pr = await github.rest.pulls.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: title,
+              head: process.env.SOURCE_BRANCH,
+              base: process.env.TARGET_BRANCH,
+              body: description
+            });
+
+            await github.rest.issues.addAssignees({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.data.number,
+              assignees: [process.env.ACTOR]
+            });
+
+            core.setOutput('pr_number', pr.data.number);
+            core.setOutput('pr_url', pr.data.html_url);
+            core.notice(`Pull request created: ${pr.data.html_url}`);
+
+      - name: Post celebrate comment
+        uses: actions/github-script@v7
+        env:
+          CELEBRATION_MESSAGE: ${{ steps.generate-content.outputs.celebration_message }}
+          CELEBRATION_MODEL: ${{ steps.generate-content.outputs.celebration_model }}
+          CELEBRATION_MODEL_ID: ${{ steps.generate-content.outputs.celebration_model_id }}
+          POEM: ${{ steps.generate-content.outputs.poem }}
+          POEM_MODEL: ${{ steps.generate-content.outputs.poem_model }}
+          POEM_MODEL_ID: ${{ steps.generate-content.outputs.poem_model_id }}
+          PR_NUMBER: ${{ steps.create-pr.outputs.pr_number }}
+          ACTOR: ${{ github.actor }}
+          TARGET_BRANCH: ${{ github.event.inputs.target_branch }}
+        with:
+          github-token: ${{ secrets.GH_PAT }}
+          script: |
+            const celebrationMessage = process.env.CELEBRATION_MESSAGE;
+            const celebrationModel = process.env.CELEBRATION_MODEL;
+            const celebrationModelId = process.env.CELEBRATION_MODEL_ID;
+            const poem = process.env.POEM;
+            const poemModel = process.env.POEM_MODEL;
+            const poemModelId = process.env.POEM_MODEL_ID;
+            const prNumber = parseInt(process.env.PR_NUMBER);
+
+            // Build comment body with celebration and CodeRabbit review trigger
+            const commentBody = celebrationMessage + '\n\n' +
+              poem + '\n\n' +
+              '\n\n---\n\n' +
+              '@coderabbitai review' +
+              '\n\n---\n\n' +
+              '*Celebration by: **' + celebrationModel + '** (`' + celebrationModelId + '`)*\n' +
+              '*Poem by: **' + poemModel + '** (`' + poemModelId + '`)*\n\n';
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body: commentBody
+            });
+
+            core.notice(`Posted celebration comment with CodeRabbit AI review trigger to PR #${prNumber}`);
