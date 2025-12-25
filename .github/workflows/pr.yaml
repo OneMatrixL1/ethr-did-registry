@@ -233,19 +233,22 @@ jobs:
               const branchName = '${{ github.event.inputs.source_branch }}';
 
               // Generate PR title and description
-              const prPrompt = 'Analyze this pull request and generate a concise title and overview description.\n\n' +
-                'Branch: ' + branchName + '\n\n' +
-                'Commits:\n' + commits + '\n\n' +
-                'Diff Stats:\n' + diffStat + '\n\n' +
-                'Code Changes (sample):\n' + diff + '\n\n' +
-                'Please provide:\n' +
-                '1. A clear, concise PR title (max 72 characters) that summarizes the main change\n' +
-                '2. A overview description in markdown format that short but informatively describes the changes made in this PR, including key modifications and their purpose.\n\n' +
-                'Format your response EXACTLY as JSON with no additional text:\n' +
-                '{\n' +
-                '  "title": "PR title here",\n' +
-                '  "description": "PR description here in markdown format"\n' +
-                '}';
+              const prPrompt = 'You are a PR analyzer. Output ONLY valid JSON, no commentary.\n\n' +
+                'DATA:\n' +
+                'Branch: ' + branchName + '\n' +
+                'Commits:\n' + commits + '\n' +
+                'Diff Stats:\n' + diffStat + '\n' +
+                'Code Changes:\n' + diff + '\n\n' +
+                'TASK: Generate PR title (max 72 chars) and description (markdown)\n\n' +
+                'RULES:\n' +
+                '- NO reasoning\n' +
+                '- NO thinking process\n' +
+                '- NO explanations\n' +
+                '- NO preamble\n' +
+                '- ONLY JSON output\n\n' +
+                'Required JSON format:\n' +
+                '{"title":"PR title here","description":"Description in markdown"}\n\n' +
+                'JSON:';
 
               // Generate PR content with retry
               const { response: aiResponse, model: prModel } = await callWithRetry(models, prPrompt, false);
