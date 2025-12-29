@@ -115,14 +115,23 @@ contract EthereumDIDRegistry {
   }
 
   /**
-   * @notice Derive an Ethereum address from a public key
-   * @dev For BLS12-381 (96-byte G2 pubkey): keccak256(pubkey)[last 20 bytes]
+   * @notice Derive an Ethereum address from a G2 public key (standard BLS scheme)
+   * @param publicKeyBytes The G2 public key bytes (192 bytes)
+   * @return The derived Ethereum address
+   */
+  function deriveAddressFromG2(bytes calldata publicKeyBytes) internal pure returns(address) {
+    bytes32 hash = keccak256(publicKeyBytes);
+    return address(uint160(uint256(hash)));
+  }
+
+  /**
+   * @notice Derive an Ethereum address from a public key (legacy G2 support)
+   * @dev For BLS12-381 (192-byte G2 pubkey): keccak256(pubkey)[last 20 bytes]
    * @param publicKeyBytes The public key bytes
    * @return The derived Ethereum address
    */
   function publicKeyToAddress(bytes calldata publicKeyBytes) internal pure returns(address) {
     if (publicKeyBytes.length == 96) {
-      // BLS12-381 G2 public key: keccak256 hash, take last 20 bytes
       bytes32 hash = keccak256(publicKeyBytes);
       return address(uint160(uint256(hash)));
     }
@@ -440,8 +449,8 @@ contract EthereumDIDRegistry {
   ) external {
     require(newOwner != address(0), "invalid_new_owner");
 
-    // Derive signer address from public key
-    address signer = publicKeyToAddress(publicKey);
+    // Derive signer address from G2 public key (standard scheme)
+    address signer = deriveAddressFromG2(publicKey);
 
     // Verify signer is the current owner
     require(signer == identityOwner(identity), "unauthorized");
@@ -449,18 +458,27 @@ contract EthereumDIDRegistry {
     // Verify oldOwner matches current owner (replay protection via owner change)
     require(oldOwner == identityOwner(identity), "invalid_owner");
 
-    // Route verification based on public key length
-    require(publicKey.length == 96, "unsupported_pubkey_type");
+    // Validate public key length (192 bytes uncompressed G2)
+    require(publicKey.length == 192, "invalid_pubkey_length");
+
+    // Validate signature length (96 bytes uncompressed G1)
+    require(signature.length == 96, "invalid_signature_length");
 
     // Construct EIP-712 hash
     bytes32 structHash = keccak256(abi.encode(CHANGE_OWNER_WITH_PUBKEY_TYPEHASH, identity, oldOwner, newOwner));
     bytes32 hash = keccak256(abi.encodePacked(EIP191_HEADER, DOMAIN_SEPARATOR, structHash));
 
-    // BLS12-381 verification: convert hash to G1 point and verify
-    BLS2.PointG1 memory message = BLS2.hashToPoint("BLS_DST", abi.encodePacked(hash));
+    // BLS12-381 verification with standard scheme:
+    // Unmarshal G2 public key (uncompressed only - BLS2 library does not support G2 compression)
     BLS2.PointG2 memory pubkey = BLS2.g2Unmarshal(publicKey);
+
+    // Hash message to G1 point (standard scheme) using BLS2 library
+    BLS2.PointG1 memory message = BLS2.hashToPoint("BLS_DST", abi.encodePacked(hash));
+
+    // Unmarshal G1 signature (must be uncompressed 96 bytes)
     BLS2.PointG1 memory sig = BLS2.g1Unmarshal(signature);
 
+    // Verify using BLS2 library's verifySingle function
     (bool pairingSuccess, bool callSuccess) = BLS2.verifySingle(sig, pubkey, message);
     require(pairingSuccess && callSuccess, "bad_signature");
 
