@@ -13,7 +13,6 @@ contract EthereumDIDRegistry {
   mapping(address => mapping(bytes32 => mapping(address => uint))) public delegates;
   mapping(address => uint) public changed;
   mapping(address => uint) public nonce;
-
   // Admin Management contract address
   address public adminManagement;
 
@@ -23,8 +22,9 @@ contract EthereumDIDRegistry {
   // Magic prefix for EIP-191 / EIP-712 typed data
   bytes2 internal constant EIP191_HEADER = 0x1901;
 
-  // EIP-712 TypeHash
+  // EIP-712 TypeHashes
   bytes32 public constant CHANGE_OWNER_TYPEHASH = keccak256("ChangeOwner(address identity,address newOwner)");
+  bytes32 public constant CHANGE_OWNER_WITH_PUBKEY_TYPEHASH = keccak256("ChangeOwnerWithPubkey(address identity,address oldOwner,address newOwner)");
 
   // BLS EIP-712 TypeHash
   bytes32 public constant BLS_CHANGE_OWNER_TYPEHASH = keccak256("BLSChangeOwner(address identity,address newOwner)");
@@ -119,11 +119,174 @@ contract EthereumDIDRegistry {
     return pairingSuccess && callSuccess;
   }
 
+  /**
+   * @notice Derive an Ethereum address from a G1 public key (inverted BLS scheme)
+   * @dev For G1 compressed (48 bytes): expand to uncompressed then keccak256(pubkey)[last 20 bytes]
+   * @dev For G1 uncompressed (96 bytes): keccak256(pubkey)[last 20 bytes]
+   * @param publicKeyBytes The G1 public key bytes (48 or 96 bytes)
+   * @return The derived Ethereum address
+   */
+  function deriveAddressFromG1(bytes calldata publicKeyBytes) internal view returns(address) {
+    bytes memory expandedKey;
+
+    if (publicKeyBytes.length == 48) {
+      // Compressed G1: expand to uncompressed
+      BLS2.PointG1 memory point = BLS2.g1UnmarshalCompressed(publicKeyBytes);
+      expandedKey = BLS2.g1Marshal(point);  // Returns 96 bytes uncompressed
+    } else if (publicKeyBytes.length == 96) {
+      // Already uncompressed
+      expandedKey = publicKeyBytes;
+    } else {
+      revert("invalid_pubkey_length");
+    }
+
+    bytes32 hash = keccak256(expandedKey);
+    return address(uint160(uint256(hash)));
+  }
+
   function checkEIP712Signature(address expectedSigner, uint8 sigV, bytes32 sigR, bytes32 sigS, bytes32 structHash) internal view returns(address) {
     bytes32 hash = keccak256(abi.encodePacked(EIP191_HEADER, DOMAIN_SEPARATOR, structHash));
     address signer = ecrecover(hash, sigV, sigR, sigS);
     require(signer == expectedSigner, "bad_eip712_signature");
     return signer;
+  }
+
+  /**
+   * @notice Hash a message to a G2 curve point
+   * @dev Follows RFC 9380 Section 5 with SHA256-based expansion
+   * @dev Uses EIP-2537 BLS12_MAP_FP_TO_G2 precompile (address 0x12)
+   * @param dst Domain separation tag
+   * @param message Message to hash
+   * @return out G2 point representing the hashed message
+   */
+  function hashToPointG2(bytes memory dst, bytes memory message) internal view returns(BLS2.PointG2 memory out) {
+    // Expand message to 128 bytes using RFC 9380 Section 5.3.1
+    bytes memory uniform_bytes = BLS2.expandMsg(dst, message, 128);
+
+    // Map two field elements to G2 curve, then add them
+    // We'll construct the result by hashing each 64-byte chunk to G2
+    bytes memory buf = new bytes(192);
+    bool ok;
+
+    // Hash first 64 bytes to G2
+    assembly {
+      let p := add(buf, 32)
+      // Input for BLS12_MAP_FP_TO_G2: 64 bytes (one field element)
+      let uniform_ptr := add(uniform_bytes, 32)
+      ok := staticcall(gas(), 0x12, uniform_ptr, 64, p, 192)
+    }
+    require(ok, "bls12_map_fp_to_g2_1 failed");
+
+    // Hash second 64 bytes to G2
+    bytes memory buf2 = new bytes(192);
+    assembly {
+      let p := add(buf2, 32)
+      let uniform_ptr := add(uniform_bytes, 96)  // offset by 64 bytes
+      ok := staticcall(gas(), 0x12, uniform_ptr, 64, p, 192)
+    }
+    require(ok, "bls12_map_fp_to_g2_2 failed");
+
+    // Add the two G2 points using BLS12_G2ADD precompile (0x0d)
+    bytes memory sum_buf = new bytes(192);
+    assembly {
+      let input := buf
+      let input2 := buf2
+      let output := sum_buf
+
+      // Call G2ADD with buf and buf2 as inputs (each 192 bytes)
+      ok := staticcall(gas(), 0x0d, add(input, 32), 384, add(output, 32), 192)
+    }
+    require(ok, "bls12_g2add failed");
+
+    // Extract the result
+    assembly {
+      let p := add(sum_buf, 32)
+      let out_ptr := out
+
+      let x1_hi := shr(128, mload(p))
+      let x1_lo := mload(add(p, 16))
+      let x0_hi := shr(128, mload(add(p, 32)))
+      let x0_lo := mload(add(p, 48))
+      let y1_hi := shr(128, mload(add(p, 64)))
+      let y1_lo := mload(add(p, 80))
+      let y0_hi := shr(128, mload(add(p, 96)))
+      let y0_lo := mload(add(p, 112))
+
+      mstore(out_ptr, x1_hi)
+      mstore(add(out_ptr, 16), x1_lo)
+      mstore(add(out_ptr, 32), x0_hi)
+      mstore(add(out_ptr, 48), x0_lo)
+      mstore(add(out_ptr, 64), y1_hi)
+      mstore(add(out_ptr, 80), y1_lo)
+      mstore(add(out_ptr, 96), y0_hi)
+      mstore(add(out_ptr, 112), y0_lo)
+    }
+
+    return out;
+  }
+
+  /**
+   * @notice Verify inverted BLS signature using pairing: e(pubkey_G1, message_G2) = e(G1_gen, sig_G2)
+   * @dev Uses EIP-2537 BLS12_PAIRING_CHECK precompile (address 0x0f)
+   * @param pubkey G1 public key point
+   * @param sig G2 signature point
+   * @param message G2 hashed message point
+   * @return pairingSuccess True if pairing check passes
+   * @return callSuccess True if precompile call succeeded
+   */
+  function verifyInvertedPairing(
+    BLS2.PointG1 memory pubkey,
+    BLS2.PointG2 memory sig,
+    BLS2.PointG2 memory message
+  ) internal view returns(bool pairingSuccess, bool callSuccess) {
+    // Generator point of G1 (for e(G1_gen, sig_G2) part)
+    // This is the standard BLS12-381 generator G1
+    BLS2.PointG1 memory g1_gen = BLS2.PointG1(
+      0x024aa2b2f08f0a91260805272dc51051,
+      0xc6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb8,
+      0x013fa4d4a0ad8b1ce186ed5061789213d,
+      0x993923066dddaf1040bc3ff59f825c78df74f2d75467e25e0f55f8a00fa030ed
+    );
+
+    // Construct pairing input array for the check:
+    // e(pubkey_G1, message_G2) * e(-G1_gen, sig_G2) = 1
+    // Which verifies: e(pubkey_G1, message_G2) = e(G1_gen, sig_G2)
+
+    uint256[24] memory input = [
+      // e(pubkey, message)
+      pubkey.x_hi,
+      pubkey.x_lo,
+      pubkey.y_hi,
+      pubkey.y_lo,
+      message.x0_hi,
+      message.x0_lo,
+      message.x1_hi,
+      message.x1_lo,
+      message.y0_hi,
+      message.y0_lo,
+      message.y1_hi,
+      message.y1_lo,
+      // e(-G1_gen, sig) = e(G1_gen, -sig) for negation
+      // We negate sig by negating its y-coordinate
+      g1_gen.x_hi,
+      g1_gen.x_lo,
+      g1_gen.y_hi,
+      g1_gen.y_lo,
+      sig.x0_hi,
+      sig.x0_lo,
+      sig.x1_hi,
+      sig.x1_lo,
+      sig.y0_hi,
+      sig.y0_lo,
+      sig.y1_hi,
+      sig.y1_lo
+    ];
+
+    uint256[1] memory out;
+    assembly {
+      callSuccess := staticcall(gas(), 0x0f, input, 768, out, 0x20)
+    }
+    return (out[0] != 0, callSuccess);
   }
 
   function validDelegate(address identity, bytes32 delegateType, address delegate) public view returns(bool) {
@@ -278,6 +441,53 @@ contract EthereumDIDRegistry {
     bytes32 structHash = keccak256(abi.encode(CHANGE_OWNER_TYPEHASH, identity, newOwner));
     checkEIP712Signature(currentOwner, sigV, sigR, sigS, structHash);
 
+    owners[identity] = newOwner;
+    emit DIDOwnerChanged(identity, newOwner, changed[identity]);
+    changed[identity] = block.number;
+  }
+
+  function changeOwnerWithPubkey(
+    address identity,
+    address oldOwner,
+    address newOwner,
+    bytes calldata publicKey,
+    bytes calldata signature
+  ) external {
+    require(newOwner != address(0), "invalid_new_owner");
+    // Validate signature length (192 bytes uncompressed G2)
+    require(signature.length == 192, "invalid_signature_length");
+    // Verify oldOwner matches current owner (replay protection via owner change)
+    require(oldOwner == identityOwner(identity), "invalid_owner");
+
+    // Derive signer address from G1 public key (inverted scheme)
+    address signer = deriveAddressFromG1(publicKey);
+    // Verify signer is the current owner
+    require(signer == identityOwner(identity), "unauthorized");
+
+    // Construct EIP-712 hash
+    bytes32 structHash = keccak256(abi.encode(CHANGE_OWNER_WITH_PUBKEY_TYPEHASH, identity, oldOwner, newOwner));
+    bytes32 hash = keccak256(abi.encodePacked(EIP191_HEADER, DOMAIN_SEPARATOR, structHash));
+
+    // BLS12-381 verification with inverted scheme:
+    // Unmarshal G1 public key (handles both compressed and uncompressed)
+    BLS2.PointG1 memory pubkey;
+    if (publicKey.length == 48) {
+      pubkey = BLS2.g1UnmarshalCompressed(publicKey);
+    } else {
+      pubkey = BLS2.g1Unmarshal(publicKey);
+    }
+
+    // Hash message to G2 point (inverted from current G1 hashing)
+    BLS2.PointG2 memory message = hashToPointG2("BLS_DST", abi.encodePacked(hash));
+
+    // Unmarshal G2 signature (must be uncompressed 192 bytes - BLS2 library does not support G2 compression)
+    BLS2.PointG2 memory sig = BLS2.g2Unmarshal(signature);
+
+    // Verify inverted pairing: e(pubkey_G1, message_G2) = e(G1_gen, sig_G2)
+    (bool pairingSuccess, bool callSuccess) = verifyInvertedPairing(pubkey, sig, message);
+    require(pairingSuccess && callSuccess, "bad_signature");
+
+    // Update owner
     owners[identity] = newOwner;
     emit DIDOwnerChanged(identity, newOwner, changed[identity]);
     changed[identity] = block.number;
