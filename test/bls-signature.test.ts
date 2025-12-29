@@ -19,9 +19,8 @@ describe('BLS Signature Verification (EIP-712 Style)', () => {
   let adminManagement: Contract
   let admin: SignerWithAddress
 
-  // BLS_CHANGE_OWNER_TYPEHASH = keccak256("BLSChangeOwner(address identity,address newOwner,uint256 nonce)")
   const BLS_CHANGE_OWNER_TYPEHASH = ethers.utils.keccak256(
-    ethers.utils.toUtf8Bytes('BLSChangeOwner(address identity,address newOwner,uint256 nonce)')
+    ethers.utils.toUtf8Bytes('BLSChangeOwner(address identity,address newOwner)')
   )
 
   // Valid BLS signature test data (pre-computed for EIP-712 style digest)
@@ -48,7 +47,7 @@ describe('BLS Signature Verification (EIP-712 Style)', () => {
   before(async () => {
     // Deploy admin management contract
     const AdminManagement = await ethers.getContractFactory('AdminManagement')
-      ;[admin] = await ethers.getSigners()
+    ;[admin] = await ethers.getSigners()
 
     adminManagement = await AdminManagement.connect(admin).deploy()
     await adminManagement.deployed()
@@ -180,11 +179,7 @@ describe('BLS Signature Verification (EIP-712 Style)', () => {
 
       try {
         // View functions don't require gas when called off-chain
-        const result = await didReg.callStatic.checkBlsSignature(
-          testVector.publicKey,
-          testVector.signature,
-          structHash
-        )
+        const result = await didReg.callStatic.checkBlsSignature(testVector.publicKey, testVector.signature, structHash)
 
         expect(result).to.be.a('boolean')
       } catch (error: any) {
