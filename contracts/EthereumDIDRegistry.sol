@@ -144,21 +144,6 @@ contract EthereumDIDRegistry {
     return address(uint160(uint256(hash)));
   }
 
-  /**
-   * @notice Derive an Ethereum address from a public key (legacy G2 support)
-   * @dev For BLS12-381 (96-byte G2 pubkey): keccak256(pubkey)[last 20 bytes]
-   * @param publicKeyBytes The public key bytes
-   * @return The derived Ethereum address
-   */
-  function publicKeyToAddress(bytes calldata publicKeyBytes) internal pure returns(address) {
-    if (publicKeyBytes.length == 96) {
-      // BLS12-381 G2 public key: keccak256 hash, take last 20 bytes
-      bytes32 hash = keccak256(publicKeyBytes);
-      return address(uint160(uint256(hash)));
-    }
-    revert("unsupported_pubkey_type");
-  }
-
   function checkEIP712Signature(address expectedSigner, uint8 sigV, bytes32 sigR, bytes32 sigS, bytes32 structHash) internal view returns(address) {
     bytes32 hash = keccak256(abi.encodePacked(EIP191_HEADER, DOMAIN_SEPARATOR, structHash));
     address signer = ecrecover(hash, sigV, sigR, sigS);
@@ -469,21 +454,15 @@ contract EthereumDIDRegistry {
     bytes calldata signature
   ) external {
     require(newOwner != address(0), "invalid_new_owner");
-
-    // Derive signer address from G1 public key (inverted scheme)
-    address signer = deriveAddressFromG1(publicKey);
-
-    // Verify signer is the current owner
-    require(signer == identityOwner(identity), "unauthorized");
-
+    // Validate signature length (192 bytes uncompressed G2)
+    require(signature.length == 192, "invalid_signature_length");
     // Verify oldOwner matches current owner (replay protection via owner change)
     require(oldOwner == identityOwner(identity), "invalid_owner");
 
-    // Validate public key length (48 bytes compressed or 96 bytes uncompressed G1)
-    require(publicKey.length == 48 || publicKey.length == 96, "invalid_pubkey_length");
-
-    // Validate signature length (192 bytes uncompressed G2)
-    require(signature.length == 192, "invalid_signature_length");
+    // Derive signer address from G1 public key (inverted scheme)
+    address signer = deriveAddressFromG1(publicKey);
+    // Verify signer is the current owner
+    require(signer == identityOwner(identity), "unauthorized");
 
     // Construct EIP-712 hash
     bytes32 structHash = keccak256(abi.encode(CHANGE_OWNER_WITH_PUBKEY_TYPEHASH, identity, oldOwner, newOwner));
