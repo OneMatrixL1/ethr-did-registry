@@ -3,7 +3,7 @@
 pragma solidity ^0.8.28;
 
 import {IAdminManagement} from "./interfaces/IAdminManagement.sol";
-import {BLS2} from "@onematrix/bls-solidity/src/libraries/BLS2.sol";
+import {BLSDockBBS} from "@onematrix/bls-solidity/src/libraries/BLSDockBBS.sol";
 
 contract EthereumDIDRegistry {
 
@@ -262,17 +262,17 @@ contract EthereumDIDRegistry {
     bytes32 hash = keccak256(abi.encodePacked(EIP191_HEADER, DOMAIN_SEPARATOR, structHash));
 
     // BLS12-381 verification with standard scheme:
-    // Unmarshal G2 public key (uncompressed only - BLS2 library does not support G2 compression)
-    BLS2.PointG2 memory pubkey = BLS2.g2Unmarshal(publicKey);
+    // Unmarshal G2 public key (uncompressed only - BLSDockBBS library does not support G2 compression)
+    BLSDockBBS.PointG2 memory pubkey = BLSDockBBS.g2Unmarshal(publicKey);
 
-    // Hash message to G1 point (standard scheme) using BLS2 library
-    BLS2.PointG1 memory message = BLS2.hashToPoint("BLS_DST", abi.encodePacked(hash));
+    // Hash message to G1 point (standard scheme) using BLSDockBBS library
+    BLSDockBBS.PointG1 memory message = BLSDockBBS.hashToPoint("BLS_DST", abi.encodePacked(hash));
 
     // Unmarshal G1 signature (must be uncompressed 96 bytes)
-    BLS2.PointG1 memory sig = BLS2.g1Unmarshal(signature);
+    BLSDockBBS.PointG1 memory sig = BLSDockBBS.g1Unmarshal(signature);
 
-    // Verify using BLS2 library's verifySingle function
-    (bool pairingSuccess, bool callSuccess) = BLS2.verifySingle(sig, pubkey, message);
+    // Verify using BLSDockBBS library's verifySingle function
+    (bool pairingSuccess, bool callSuccess) = BLSDockBBS.verifySingle(sig, pubkey, message);
     require(pairingSuccess && callSuccess, "bad_signature");
 
     // Update owner
