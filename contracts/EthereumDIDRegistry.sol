@@ -96,6 +96,7 @@ contract EthereumDIDRegistry {
    * @return The derived Ethereum address
    */
   function deriveAddressFromG2(bytes calldata publicKeyBytes) internal pure returns(address) {
+    require(publicKeyBytes.length == 192, "invalid_public_key_length");
     bytes32 hash = keccak256(publicKeyBytes);
     return address(uint160(uint256(hash)));
   }
@@ -242,6 +243,9 @@ contract EthereumDIDRegistry {
   ) external {
     require(newOwner != address(0), "invalid_new_owner");
 
+    // Validate signature length (96 bytes uncompressed G1)
+    require(signature.length == 96, "invalid_signature_length");
+
     // Derive signer address from G2 public key (standard scheme)
     address signer = deriveAddressFromG2(publicKey);
 
@@ -250,12 +254,6 @@ contract EthereumDIDRegistry {
 
     // Verify oldOwner matches current owner (replay protection via owner change)
     require(oldOwner == identityOwner(identity), "invalid_owner");
-
-    // Validate public key length (192 bytes uncompressed G2)
-    require(publicKey.length == 192, "invalid_pubkey_length");
-
-    // Validate signature length (96 bytes uncompressed G1)
-    require(signature.length == 96, "invalid_signature_length");
 
     // Construct EIP-712 hash
     bytes32 structHash = keccak256(abi.encode(CHANGE_OWNER_WITH_PUBKEY_TYPEHASH, identity, oldOwner, newOwner));
