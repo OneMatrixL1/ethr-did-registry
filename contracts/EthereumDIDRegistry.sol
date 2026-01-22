@@ -126,7 +126,7 @@ contract EthereumDIDRegistry {
     }
     return identityOwner(identity);
   }
-  
+
   /**
    * @notice Get owner from 40-byte identity (owner + issuer concatenated)
    * @dev Extracts owner (first 20 bytes) and issuer (last 20 bytes)
@@ -310,7 +310,7 @@ contract EthereumDIDRegistry {
   }
 
   function setAttribute(bytes memory identity, address actor, bytes32 name, bytes memory value, uint validity ) internal {
-    address identityAddress = address(uint160(uint256(keccak256(identity))));
+    address identityAddress = (identity.length == 40) ? getPId(identity) : address(uint160(uint256(keccak256(identity))));
     require (actor == identityOwner(identityAddress), "bad_actor");
 
     emit DIDAttributeChanged(identityAddress, name, value, block.timestamp + validity, changed[identityAddress]);
@@ -347,5 +347,205 @@ contract EthereumDIDRegistry {
   function revokeAttributeSigned(address identity, uint8 sigV, bytes32 sigR, bytes32 sigS, bytes32 name, bytes memory value) public {
     bytes32 hash = keccak256(abi.encodePacked(bytes1(0x19), bytes1(0), this, nonce[identityOwner(identity)], identity, "revokeAttribute", name, value));
     revokeAttribute(identity, checkSignature(identity, sigV, sigR, sigS, hash), name, value);
+  }
+
+
+  // Support Dual DID here
+  
+  /**
+   * @notice Get the persistent identity (pId) for a 40-byte identity
+   * @param identity 40-byte identity
+   * @return pId keccak256 hash of the identity as an address
+   */
+  function getPId(bytes memory identity) public pure returns (address pId) {
+    return address(uint160(uint256(keccak256(identity))));
+  }
+
+  /**
+   * @notice Extract holder and issuer addresses from a 40-byte identity
+   * @param identity 40-byte identity (holder + issuer concatenated)
+   * @return holder The address of the holder (first 20 bytes)
+   * @return issuer The address of the issuer (last 20 bytes)
+   */
+  function decodeDualIdentity(bytes memory identity) public pure returns (address holder, address issuer) {
+    require(identity.length == 40, "invalid_dual_identity_length");
+    assembly {
+      // Load first 20 bytes as holder (skip 32-byte length prefix, then shift)
+      holder := shr(96, mload(add(identity, 32)))
+      // Load 32 bytes from position 40 (32-byte length + 20-byte holder - 12 bytes for alignment)
+      // This loads: last 12 bytes of holder + 20 bytes of issuer
+      // The issuer ends up in the rightmost 20 bytes
+      issuer := mload(add(identity, 40))
+    }
+  }
+
+  /**
+   * @notice Get owner from 40-byte identity (owner + issuer concatenated)
+   * @dev Extracts owner (first 20 bytes) and issuer (last 20 bytes)
+   *      Computes pId = keccak256(identity)
+   *      Returns owners[pId] if set, else returns extracted owner
+   * @param identity 40-byte identity (owner + issuer)
+   * @return The owner address
+   */
+  function getOwnerDualDID(bytes memory identity) public view returns(address) {
+    require(identity.length == 40, "invalid_identity_length");
+    
+    // Compute pId = keccak256(identity)
+    address pId = getPId(identity);
+    
+    // If owners[pId] is set, return it
+    address registeredOwner = owners[pId];
+    if (registeredOwner != address(0x00)) {
+      return registeredOwner;
+    }
+
+    // Extract owner (first 20 bytes)
+    (address owner, ) = decodeDualIdentity(identity);
+    
+    // Otherwise return the extracted owner
+    return owner;
+  }
+  
+  /**
+   * @notice Get issuer from 40-byte identity (owner + issuer concatenated)
+   * @dev Extracts owner (first 20 bytes) and issuer (last 20 bytes)
+   *      Computes pId = keccak256(identity)
+   *      Returns issuers[pId] if set, else falls back to getOwner logic
+   * @param identity 40-byte identity (owner + issuer)
+   * @return The issuer address
+   */
+  function getIssuerDualDID(bytes memory identity) public view returns(address) {
+    require(identity.length == 40, "invalid_identity_length");
+    
+    // Compute pId = keccak256(identity)
+    address pId = getPId(identity);
+    
+    // If issuers[pId] is set, return it
+    address registeredIssuer = issuers[pId];
+    if (registeredIssuer != address(0x00)) {
+      return registeredIssuer;
+    }
+    
+    // Otherwise fallback to getOwner logic (returns owners[pId] if set, else owner)
+    address registeredOwner = owners[pId];
+    if (registeredOwner != address(0x00)) {
+      return registeredOwner;
+    }
+
+    // Extract issuer (last 20 bytes)
+    (, address issuer) = decodeDualIdentity(identity);
+    
+    // Return extracted issuer as final fallback
+    return issuer;
+  }
+
+  function changeOwnerDualDID(bytes memory identity, address newOwner) public {
+    changeOwner(getPId(identity), msg.sender, newOwner);
+  }
+
+  function changeOwnerSignedDualDID(bytes memory identity, uint8 sigV, bytes32 sigR, bytes32 sigS, address newOwner) public {
+    address pId = getPId(identity);
+    bytes32 hash = keccak256(abi.encodePacked(bytes1(0x19), bytes1(0), this, nonce[identityOwner(pId)], pId, "changeOwner", newOwner));
+    changeOwner(pId, checkSignature(pId, sigV, sigR, sigS, hash), newOwner);
+  }
+
+  function adminChangeOwnerDualDID(bytes memory identity, address newOwner) public onlyAdmin {
+    address pId = getPId(identity);
+    owners[pId] = newOwner;
+    emit DIDOwnerChanged(pId, newOwner, changed[pId]);
+    changed[pId] = block.number;
+  }
+
+  function changeOwnerEIP712DualDID(bytes memory identity, address newOwner, uint8 sigV, bytes32 sigR, bytes32 sigS) public {
+    require(newOwner != address(0), "zero_owner");
+    address pId = getPId(identity);
+    address currentOwner = identityOwner(pId);
+
+    bytes32 structHash = keccak256(abi.encode(CHANGE_OWNER_TYPEHASH, pId, newOwner));
+    checkEIP712Signature(currentOwner, sigV, sigR, sigS, structHash);
+
+    owners[pId] = newOwner;
+    emit DIDOwnerChanged(pId, newOwner, changed[pId]);
+    changed[pId] = block.number;
+  }
+
+  function changeOwnerWithPubkeyDualDID(
+    bytes memory identity,
+    address oldOwner,
+    address newOwner,
+    bytes calldata publicKey,
+    bytes calldata signature
+  ) external {
+    address pId = getPId(identity);
+    require(newOwner != address(0), "invalid_new_owner");
+
+    // Validate signature length (96 bytes uncompressed G1)
+    require(signature.length == 96, "invalid_signature_length");
+
+    // Derive signer address from G2 public key (standard scheme)
+    address signer = deriveAddressFromG2(publicKey);
+
+    // Verify signer is the current owner
+    require(signer == identityOwner(pId), "unauthorized");
+
+    // Verify oldOwner matches current owner (replay protection via owner change)
+    require(oldOwner == identityOwner(pId), "invalid_owner");
+
+    // Construct EIP-712 hash
+    bytes32 structHash = keccak256(abi.encode(CHANGE_OWNER_WITH_PUBKEY_TYPEHASH, pId, oldOwner, newOwner));
+    bytes32 hash = keccak256(abi.encodePacked(EIP191_HEADER, DOMAIN_SEPARATOR, structHash));
+
+    // BLS12-381 verification
+    BLSDockBBS.PointG2 memory pubkey = BLSDockBBS.g2Unmarshal(publicKey);
+    BLSDockBBS.PointG1 memory message = BLSDockBBS.hashToPoint("BLS_DST", abi.encodePacked(hash));
+    BLSDockBBS.PointG1 memory sig = BLSDockBBS.g1Unmarshal(signature);
+
+    (bool pairingSuccess, bool callSuccess) = BLSDockBBS.verifySingle(sig, pubkey, message);
+    require(pairingSuccess && callSuccess, "bad_signature");
+
+    // Update owner
+    owners[pId] = newOwner;
+    emit DIDOwnerChanged(pId, newOwner, changed[pId]);
+    changed[pId] = block.number;
+  }
+
+  function addDelegateDualDID(bytes memory identity, bytes32 delegateType, address delegate, uint validity) public {
+    addDelegate(getPId(identity), msg.sender, delegateType, delegate, validity);
+  }
+
+  function addDelegateSignedDualDID(bytes memory identity, uint8 sigV, bytes32 sigR, bytes32 sigS, bytes32 delegateType, address delegate, uint validity) public {
+    address pId = getPId(identity);
+    bytes32 hash = keccak256(abi.encodePacked(bytes1(0x19), bytes1(0), this, nonce[identityOwner(pId)], pId, "addDelegate", delegateType, delegate, validity));
+    addDelegate(pId, checkSignature(pId, sigV, sigR, sigS, hash), delegateType, delegate, validity);
+  }
+
+  function revokeDelegateDualDID(bytes memory identity, bytes32 delegateType, address delegate) public {
+    revokeDelegate(getPId(identity), msg.sender, delegateType, delegate);
+  }
+
+  function revokeDelegateSignedDualDID(bytes memory identity, uint8 sigV, bytes32 sigR, bytes32 sigS, bytes32 delegateType, address delegate) public {
+    address pId = getPId(identity);
+    bytes32 hash = keccak256(abi.encodePacked(bytes1(0x19), bytes1(0), this, nonce[identityOwner(pId)], pId, "revokeDelegate", delegateType, delegate));
+    revokeDelegate(pId, checkSignature(pId, sigV, sigR, sigS, hash), delegateType, delegate);
+  }
+
+  function setAttributeDualDID(bytes memory identity, bytes32 name, bytes memory value, uint validity) public {
+    setAttribute(getPId(identity), msg.sender, name, value, validity);
+  }
+
+  function setAttributeSignedDualDID(bytes memory identity, uint8 sigV, bytes32 sigR, bytes32 sigS, bytes32 name, bytes memory value, uint validity) public {
+    address pId = getPId(identity);
+    bytes32 hash = keccak256(abi.encodePacked(bytes1(0x19), bytes1(0), this, nonce[identityOwner(pId)], pId, "setAttribute", name, value, validity));
+    setAttribute(pId, checkSignature(pId, sigV, sigR, sigS, hash), name, value, validity);
+  }
+
+  function revokeAttributeDualDID(bytes memory identity, bytes32 name, bytes memory value) public {
+    revokeAttribute(getPId(identity), msg.sender, name, value);
+  }
+
+  function revokeAttributeSignedDualDID(bytes memory identity, uint8 sigV, bytes32 sigR, bytes32 sigS, bytes32 name, bytes memory value) public {
+    address pId = getPId(identity);
+    bytes32 hash = keccak256(abi.encodePacked(bytes1(0x19), bytes1(0), this, nonce[identityOwner(pId)], pId, "revokeAttribute", name, value));
+    revokeAttribute(pId, checkSignature(pId, sigV, sigR, sigS, hash), name, value);
   }
 }
