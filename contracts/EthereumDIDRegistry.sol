@@ -386,7 +386,46 @@ contract EthereumDIDRegistry {
     bytes calldata publicKey,
     bytes calldata signature
   ) public withDualContext(identity) {
-    changeOwnerWithPubkey(getPIdDualDID(identity), oldOwner, newOwner, publicKey, signature);
+    address pId = getPIdDualDID(identity);
+    require(newOwner != address(0), "invalid_new_owner");
+
+    // Validate signature length (96 bytes uncompressed G1)
+    require(signature.length == 96, "invalid_signature_length");
+
+    // Derive signer address from G2 public key (standard scheme)
+    address signer = deriveAddressFromG2(publicKey);
+    address currentOwner = identityOwner(pId);
+
+    // Authorization: signer must be current owner or the BLS key from identity
+    // (the issuer part of the 40-byte identity)
+    require(signer == currentOwner || signer == getIssuerDualDID(identity), "unauthorized");
+
+    // Replay protection & state consistency
+    require(oldOwner == currentOwner || oldOwner == signer, "invalid_owner");
+
+    // Construct EIP-712 hash
+    // We use the pId as the identity for the hash since that's what's stored on-chain
+    bytes32 structHash = keccak256(abi.encode(CHANGE_OWNER_WITH_PUBKEY_TYPEHASH, pId, oldOwner, newOwner));
+    bytes32 hash = keccak256(abi.encodePacked(EIP191_HEADER, DOMAIN_SEPARATOR, structHash));
+
+    // BLS12-381 verification with standard scheme:
+    // Unmarshal G2 public key (uncompressed only - BLSDockBBS library does not support G2 compression)
+    BLSDockBBS.PointG2 memory pubkey = BLSDockBBS.g2Unmarshal(publicKey);
+
+    // Hash message to G1 point (standard scheme) using BLSDockBBS library
+    BLSDockBBS.PointG1 memory message = BLSDockBBS.hashToPoint("BLS_DST", abi.encodePacked(hash));
+
+    // Unmarshal G1 signature (must be uncompressed 96 bytes)
+    BLSDockBBS.PointG1 memory sig = BLSDockBBS.g1Unmarshal(signature);
+
+    // Verify using BLSDockBBS library's verifySingle function
+    (bool pairingSuccess, bool callSuccess) = BLSDockBBS.verifySingle(sig, pubkey, message);
+    require(pairingSuccess && callSuccess, "bad_signature");
+
+    // Update owner
+    owners[pId] = newOwner;
+    emit DIDOwnerChanged(pId, newOwner, changed[pId]);
+    changed[pId] = block.number;
   }
 
   function addDelegateDualDID(bytes memory identity, bytes32 delegateType, address delegate, uint validity) public withDualContext(identity) {
