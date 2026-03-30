@@ -89,12 +89,9 @@ describe('DelegateCertificate', () => {
           .setDelegateCertificate(identity.address, HOLDER_DID, CHIP_DID, TIMESTAMP, AA_SIGNATURE)
       })
 
-      it('should store the certificate', async () => {
-        const cert = await didReg.getDelegateCertificate(identity.address)
-        expect(cert.holderDID).to.equal(HOLDER_DID)
-        expect(cert.chipDID).to.equal(CHIP_DID)
-        expect(cert.timestamp.toNumber()).to.equal(TIMESTAMP)
-        expect(cert.aaSignature).to.equal(ethers.utils.hexlify(AA_SIGNATURE))
+      it('should store the certificate hash', async () => {
+        const isValid = await didReg.verifyCertificate(identity.address, HOLDER_DID, CHIP_DID, TIMESTAMP, AA_SIGNATURE)
+        expect(isValid).to.be.true
       })
 
       it('should update changed to current block', async () => {
@@ -137,10 +134,11 @@ describe('DelegateCertificate', () => {
           .setDelegateCertificate(identity.address, HOLDER_DID, NEW_CHIP_DID, NEW_TIMESTAMP, AA_SIGNATURE)
       })
 
-      it('should overwrite chipDID and timestamp', async () => {
-        const cert = await didReg.getDelegateCertificate(identity.address)
-        expect(cert.chipDID).to.equal(NEW_CHIP_DID)
-        expect(cert.timestamp.toNumber()).to.equal(NEW_TIMESTAMP)
+      it('should overwrite with new certificate hash', async () => {
+        const isNewValid = await didReg.verifyCertificate(identity.address, HOLDER_DID, NEW_CHIP_DID, NEW_TIMESTAMP, AA_SIGNATURE)
+        expect(isNewValid).to.be.true
+        const isOldValid = await didReg.verifyCertificate(identity.address, HOLDER_DID, CHIP_DID, TIMESTAMP, AA_SIGNATURE)
+        expect(isOldValid).to.be.false
       })
 
       it('should emit event with previousChange pointing to prior block', async () => {
@@ -181,11 +179,9 @@ describe('DelegateCertificate', () => {
           )
       })
 
-      it('should store the certificate', async () => {
-        const cert = await didReg.getDelegateCertificate(signerAddress)
-        expect(cert.holderDID).to.equal(NEW_HOLDER_DID)
-        expect(cert.chipDID).to.equal(CHIP_DID)
-        expect(cert.timestamp.toNumber()).to.equal(TIMESTAMP)
+      it('should store the certificate hash', async () => {
+        const isValid = await didReg.verifyCertificate(signerAddress, NEW_HOLDER_DID, CHIP_DID, TIMESTAMP, AA_SIGNATURE)
+        expect(isValid).to.be.true
       })
 
       it('should increment nonce', async () => {
@@ -259,13 +255,10 @@ describe('DelegateCertificate', () => {
     })
   })
 
-  describe('getDelegateCertificate()', () => {
-    it('should return empty struct for identity with no certificate', async () => {
-      const cert = await didReg.getDelegateCertificate(badBoy.address)
-      expect(cert.holderDID).to.equal('')
-      expect(cert.chipDID).to.equal('')
-      expect(cert.timestamp.toNumber()).to.equal(0)
-      expect(cert.aaSignature).to.equal('0x')
+  describe('verifyCertificate()', () => {
+    it('should return false for identity with no certificate', async () => {
+      const isValid = await didReg.verifyCertificate(badBoy.address, HOLDER_DID, CHIP_DID, TIMESTAMP, AA_SIGNATURE)
+      expect(isValid).to.be.false
     })
   })
 })

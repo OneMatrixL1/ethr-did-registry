@@ -14,14 +14,7 @@ contract EthereumDIDRegistry {
   mapping(address => uint) public changed;
   mapping(address => uint) public nonce;
 
-  struct DelegateCertificate {
-    string holderDID;
-    string chipDID;
-    uint256 timestamp;
-    bytes aaSignature;
-  }
-
-  mapping(address => DelegateCertificate) public delegateCertificates;
+  mapping(address => bytes32) public delegateCertificateHashes;
   
   // Mapping to provide authorization context for Dual DIDs during a transaction
   mapping(address => address) private dualDIDContext;
@@ -486,7 +479,9 @@ contract EthereumDIDRegistry {
     uint256 timestamp,
     bytes calldata aaSignature
   ) internal {
-    delegateCertificates[identity] = DelegateCertificate(holderDID, chipDID, timestamp, aaSignature);
+    delegateCertificateHashes[identity] = keccak256(
+      abi.encodePacked(holderDID, chipDID, timestamp, aaSignature)
+    );
     emit DIDDelegateCertificateChanged(identity, holderDID, chipDID, timestamp, aaSignature, changed[identity]);
     changed[identity] = block.number;
   }
@@ -519,7 +514,15 @@ contract EthereumDIDRegistry {
     _setDelegateCertificate(identity, holderDID, chipDID, timestamp, aaSignature);
   }
 
-  function getDelegateCertificate(address identity) public view returns (DelegateCertificate memory) {
-    return delegateCertificates[identity];
+  function verifyCertificate(
+    address identity,
+    string calldata holderDID,
+    string calldata chipDID,
+    uint256 timestamp,
+    bytes calldata aaSignature
+  ) public view returns (bool) {
+    return delegateCertificateHashes[identity] == keccak256(
+      abi.encodePacked(holderDID, chipDID, timestamp, aaSignature)
+    );
   }
 }
