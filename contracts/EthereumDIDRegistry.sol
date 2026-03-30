@@ -13,6 +13,15 @@ contract EthereumDIDRegistry {
   mapping(address => mapping(bytes32 => mapping(address => uint))) public delegates;
   mapping(address => uint) public changed;
   mapping(address => uint) public nonce;
+
+  struct DelegateCertificate {
+    string holderDID;
+    string chipDID;
+    uint256 timestamp;
+    bytes aaSignature;
+  }
+
+  mapping(address => DelegateCertificate) public delegateCertificates;
   
   // Mapping to provide authorization context for Dual DIDs during a transaction
   mapping(address => address) private dualDIDContext;
@@ -75,6 +84,15 @@ contract EthereumDIDRegistry {
     bytes32 name,
     bytes value,
     uint validTo,
+    uint previousChange
+  );
+
+  event DIDDelegateCertificateChanged(
+    address indexed identity,
+    string holderDID,
+    string chipDID,
+    uint256 timestamp,
+    bytes aaSignature,
     uint previousChange
   );
 
@@ -458,5 +476,50 @@ contract EthereumDIDRegistry {
 
   function revokeAttributeSignedDualDID(bytes memory identity, uint8 sigV, bytes32 sigR, bytes32 sigS, bytes32 name, bytes memory value) public withDualContext(identity) {
     revokeAttributeSigned(getPIdDualDID(identity), sigV, sigR, sigS, name, value);
+  }
+
+  // ─── Delegate Certificate ────────────────────────────────────────────────────
+  function _setDelegateCertificate(
+    address identity,
+    string calldata holderDID,
+    string calldata chipDID,
+    uint256 timestamp,
+    bytes calldata aaSignature
+  ) internal {
+    delegateCertificates[identity] = DelegateCertificate(holderDID, chipDID, timestamp, aaSignature);
+    emit DIDDelegateCertificateChanged(identity, holderDID, chipDID, timestamp, aaSignature, changed[identity]);
+    changed[identity] = block.number;
+  }
+
+  function setDelegateCertificate(
+    address identity,
+    string calldata holderDID,
+    string calldata chipDID,
+    uint256 timestamp,
+    bytes calldata aaSignature
+  ) public onlyOwner(identity, msg.sender) {
+    _setDelegateCertificate(identity, holderDID, chipDID, timestamp, aaSignature);
+  }
+
+  function setDelegateCertificateSigned(
+    address identity,
+    uint8 sigV, bytes32 sigR, bytes32 sigS,
+    string calldata holderDID,
+    string calldata chipDID,
+    uint256 timestamp,
+    bytes calldata aaSignature
+  ) public {
+    bytes32 hash = keccak256(abi.encodePacked(
+      bytes1(0x19), bytes1(0), this,
+      nonce[identityOwner(identity)],
+      identity, "setDelegateCertificate",
+      holderDID, chipDID, timestamp, aaSignature
+    ));
+    checkSignature(identity, sigV, sigR, sigS, hash);
+    _setDelegateCertificate(identity, holderDID, chipDID, timestamp, aaSignature);
+  }
+
+  function getDelegateCertificate(address identity) public view returns (DelegateCertificate memory) {
+    return delegateCertificates[identity];
   }
 }
