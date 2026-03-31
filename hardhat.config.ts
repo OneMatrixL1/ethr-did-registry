@@ -48,9 +48,9 @@ const config: HardhatUserConfig = {
     hardhat: {
       forking: process.env.FORK_NETWORK
         ? {
-            url: process.env.FORK_NETWORK,
-            enabled: true,
-          }
+          url: process.env.FORK_NETWORK,
+          enabled: true,
+        }
         : undefined,
       allowUnlimitedContractSize: true,
     },
@@ -62,6 +62,10 @@ const config: HardhatUserConfig = {
       url: 'https://rpc.vietcha.in',
       accounts: process.env.PRIVATE_KEY !== undefined ? [process.env.PRIVATE_KEY] : [],
     },
+    vnidchain: {
+      url: 'https://vnidchain-rpc.vbsn.vn',
+      accounts: process.env.PRIVATE_KEY !== undefined ? [process.env.PRIVATE_KEY] : [],
+    },
   },
   gasReporter: {
     enabled: process.env.REPORT_GAS !== undefined,
@@ -69,7 +73,8 @@ const config: HardhatUserConfig = {
   },
   etherscan: {
     apiKey: {
-      onematrix: process.env.ETHERSCAN_API_KEY || ''
+      onematrix: 'abc', // Fallback to 'abc' for Blockscout
+      vnidchain: 'empty',
     },
     customChains: [
       {
@@ -78,6 +83,14 @@ const config: HardhatUserConfig = {
         urls: {
           apiURL: 'https://explorer.vietcha.in/api',
           browserURL: 'https://explorer.vietcha.in',
+        },
+      },
+      {
+        network: 'vnidchain',
+        chainId: 54000,
+        urls: {
+          apiURL: 'https://vnidchain-explorer.vbsn.vn/api/v1',
+          browserURL: 'https://vnidchain-explorer.vbsn.vn',
         },
       },
     ],
