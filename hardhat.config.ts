@@ -28,15 +28,16 @@ const config: HardhatUserConfig = {
       {
         version: '0.8.28',
         settings: {
-          // NOTE — this contract cannot currently target VBSN Besu (84001).
-          // That chain is pre-Shanghai (PUSH0/TLOAD/MCOPY are invalid opcodes)
-          // AND lacks the EIP-2537 BLS12-381 precompiles that
-          // @onematrix/bls-solidity calls (0x0b/0x10/0x11 probe as empty
-          // accounts, while 0x05 modexp executes normally). Lowering this to
-          // 'paris' fails to compile on BLSDockBBS.sol's mcopy, and fixing
-          // that alone would still leave a runtime dependency on Prague
-          // precompiles. Deploying there needs a chain fork upgrade.
-          evmVersion: 'cancun',
+          // VBSN Besu (84001) is pre-Shanghai: PUSH0/TLOAD/MCOPY are invalid
+          // opcodes there, and solc 0.8.28 defaults to cancun. Needs
+          // @onematrix/bls-solidity at fix/paris-compatible-memory-copy or
+          // later, which drops mcopy from BLSDockBBS.
+          //
+          // Note the BLS owner-change paths (changeOwnerWithPubkey,
+          // changeOwnerWithPubkeyDualDID) still call the EIP-2537 BLS12-381
+          // precompiles and will revert on 84001 — those are Prague-era and
+          // probe as empty accounts there. Core ERC-1056 is unaffected.
+          evmVersion: 'paris',
           optimizer: {
             enabled: true,
             runs: 1000,
