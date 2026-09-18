@@ -28,6 +28,14 @@ const config: HardhatUserConfig = {
       {
         version: '0.8.28',
         settings: {
+          // NOTE — this contract cannot currently target VBSN Besu (84001).
+          // That chain is pre-Shanghai (PUSH0/TLOAD/MCOPY are invalid opcodes)
+          // AND lacks the EIP-2537 BLS12-381 precompiles that
+          // @onematrix/bls-solidity calls (0x0b/0x10/0x11 probe as empty
+          // accounts, while 0x05 modexp executes normally). Lowering this to
+          // 'paris' fails to compile on BLSDockBBS.sol's mcopy, and fixing
+          // that alone would still leave a runtime dependency on Prague
+          // precompiles. Deploying there needs a chain fork upgrade.
           evmVersion: 'cancun',
           optimizer: {
             enabled: true,
@@ -66,6 +74,14 @@ const config: HardhatUserConfig = {
       url: 'https://vnidchain-rpc.vbsn.vn',
       accounts: process.env.PRIVATE_KEY !== undefined ? [process.env.PRIVATE_KEY] : [],
     },
+    besu: {
+      url: 'https://besu-rpc.vbsn.vn',
+      chainId: 84001,
+      accounts: process.env.PRIVATE_KEY !== undefined ? [process.env.PRIVATE_KEY] : [],
+      // The node rejects anything under its configured minimum gas price
+      // (eth_gasPrice reports 0.1 gwei).
+      gasPrice: 200_000_000,
+    },
   },
   gasReporter: {
     enabled: process.env.REPORT_GAS !== undefined,
@@ -75,6 +91,7 @@ const config: HardhatUserConfig = {
     apiKey: {
       onematrix: 'abc', // Fallback to 'abc' for Blockscout
       vnidchain: 'empty',
+      besu: 'empty',
     },
     customChains: [
       {
@@ -91,6 +108,14 @@ const config: HardhatUserConfig = {
         urls: {
           apiURL: 'https://vnidchain-explorer.vbsn.vn/api/v1',
           browserURL: 'https://vnidchain-explorer.vbsn.vn',
+        },
+      },
+      {
+        network: 'besu',
+        chainId: 84001,
+        urls: {
+          apiURL: 'https://besu-explorer.vbsn.vn/api/v1',
+          browserURL: 'https://besu-explorer.vbsn.vn',
         },
       },
     ],
