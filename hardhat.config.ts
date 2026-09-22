@@ -28,7 +28,16 @@ const config: HardhatUserConfig = {
       {
         version: '0.8.28',
         settings: {
-          evmVersion: 'cancun',
+          // VBSN Besu (84001) is pre-Shanghai: PUSH0/TLOAD/MCOPY are invalid
+          // opcodes there, and solc 0.8.28 defaults to cancun. Needs
+          // @onematrix/bls-solidity at fix/paris-compatible-memory-copy or
+          // later, which drops mcopy from BLSDockBBS.
+          //
+          // Note the BLS owner-change paths (changeOwnerWithPubkey,
+          // changeOwnerWithPubkeyDualDID) still call the EIP-2537 BLS12-381
+          // precompiles and will revert on 84001 — those are Prague-era and
+          // probe as empty accounts there. Core ERC-1056 is unaffected.
+          evmVersion: 'paris',
           optimizer: {
             enabled: true,
             runs: 1000,
@@ -66,6 +75,14 @@ const config: HardhatUserConfig = {
       url: 'https://vnidchain-rpc.vbsn.vn',
       accounts: process.env.PRIVATE_KEY !== undefined ? [process.env.PRIVATE_KEY] : [],
     },
+    besu: {
+      url: 'https://besu-rpc.vbsn.vn',
+      chainId: 84001,
+      accounts: process.env.PRIVATE_KEY !== undefined ? [process.env.PRIVATE_KEY] : [],
+      // The node rejects anything under its configured minimum gas price
+      // (eth_gasPrice reports 0.1 gwei).
+      gasPrice: 200_000_000,
+    },
   },
   gasReporter: {
     enabled: process.env.REPORT_GAS !== undefined,
@@ -75,6 +92,7 @@ const config: HardhatUserConfig = {
     apiKey: {
       onematrix: 'abc', // Fallback to 'abc' for Blockscout
       vnidchain: 'empty',
+      besu: 'empty',
     },
     customChains: [
       {
@@ -91,6 +109,14 @@ const config: HardhatUserConfig = {
         urls: {
           apiURL: 'https://vnidchain-explorer.vbsn.vn/api/v1',
           browserURL: 'https://vnidchain-explorer.vbsn.vn',
+        },
+      },
+      {
+        network: 'besu',
+        chainId: 84001,
+        urls: {
+          apiURL: 'https://besu-explorer.vbsn.vn/api/v1',
+          browserURL: 'https://besu-explorer.vbsn.vn',
         },
       },
     ],
